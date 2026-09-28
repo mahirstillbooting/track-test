@@ -170,13 +170,18 @@ function setupFirebaseListeners() {
     document.getElementById('satsVal').textContent = sats;
     document.getElementById('hdopVal').textContent = Number(hdop).toFixed(1);
 
-    // Format last update timestamp
+    // Format last update timestamp safely (Fixes 1970 date bug for ESP32 millis() & test data)
     let timeString = '';
-    if (ts > 0) {
-      const d = new Date(ts > 10000000000 ? ts : ts * 1000);
+    const now = new Date();
+    const isEpochMs = ts > 1577836800000;  // > Jan 1, 2020 in ms
+    const isEpochSec = ts > 1577836800 && ts < 1577836800000; // > Jan 1, 2020 in sec
+
+    if (isEpochMs || isEpochSec) {
+      const d = new Date(isEpochMs ? ts : ts * 1000);
       timeString = d.toLocaleTimeString() + ' (' + d.toLocaleDateString() + ')';
     } else {
-      timeString = `Received: ${new Date().toLocaleTimeString()} (Test Data)`;
+      // For ESP32 millis() or test data, display local receipt time
+      timeString = now.toLocaleTimeString() + ' (Just now)';
     }
     document.getElementById('lastUpdateVal').textContent = timeString;
 
