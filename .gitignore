@@ -1,0 +1,7 @@
+# Local configuration containing sensitive keys
+config.js
+
+# OS & Temp files
+.DS_Store
+Thumbs.db
+*.log

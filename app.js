@@ -1,16 +1,16 @@
 // ESP32 Live Tracker Client Application
 
-// 1. Firebase Configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyBc8wZeR65Mxwax0WV-7VmxLKz_tFDUsGE",
-  authDomain: "track-test-4ddde.firebaseapp.com",
-  databaseURL: "https://track-test-4ddde-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "track-test-4ddde",
-  storageBucket: "track-test-4ddde.firebasestorage.app",
-  messagingSenderId: "111986334538",
-  appId: "1:111986334538:web:e146f1a84595f7603cbfb3",
-  measurementId: "G-WPSZZ4H6H1"
+// 1. Firebase Configuration (Loaded dynamically from config.js)
+const firebaseConfig = window.firebaseConfig || {
+  apiKey: "YOUR_FIREBASE_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT_ID"
 };
+
+if (!window.firebaseConfig) {
+  console.warn("Firebase configuration not found in config.js. Using template values.");
+}
 
 // Initialize Firebase Realtime Database
 firebase.initializeApp(firebaseConfig);
