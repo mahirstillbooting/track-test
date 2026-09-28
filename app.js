@@ -76,12 +76,18 @@ function updateMarkerPosition(newLat, newLng) {
     return;
   }
 
-  // Calculate position delta to avoid unnecessary micro-jitter (< ~0.1 meter)
-  const deltaLat = Math.abs(newLat - lastCoords.lat);
-  const deltaLng = Math.abs(newLng - lastCoords.lng);
+  // Calculate distance moved in meters using Haversine formula
+  const R = 6371000; // Earth radius in meters
+  const dLat = (newLat - lastCoords.lat) * Math.PI / 180;
+  const dLng = (newLng - lastCoords.lng) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lastCoords.lat * Math.PI / 180) * Math.cos(newLat * Math.PI / 180) *
+            Math.sin(dLng/2) * Math.sin(dLng/2);
+  const distMeters = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-  if (deltaLat < 0.000001 && deltaLng < 0.000001) {
-    return; // Tiny change, ignore jump
+  // If change is under 3 meters (GPS stationary drift/noise), keep marker completely still
+  if (distMeters < 3.0) {
+    return;
   }
 
   // Smooth position interpolation over 800ms

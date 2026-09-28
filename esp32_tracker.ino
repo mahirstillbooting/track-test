@@ -159,6 +159,11 @@ void loop() {
     }
 
     if (validFix) {
+      // Clamp low speeds to 0.0 km/h to prevent stationary noise
+      if (speedKmh < 1.0) {
+        speedKmh = 0.0;
+      }
+
       // 1. Update live telemetry under tracker/current
       String currentPayload = "{";
       currentPayload += "\"lat\":" + String(currentLat, 6) + ",";
