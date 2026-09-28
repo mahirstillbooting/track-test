@@ -144,11 +144,21 @@ function setupFirebaseListeners() {
     }
   });
 
+  let previousActiveState = null;
+
   // B. Tracker Sharing Status Listener (tracker/active)
   db.ref('tracker/active').on('value', (snap) => {
     const isActive = snap.val() === true;
     const indicator = document.getElementById('sharingStatus');
     const statusText = document.getElementById('sharingStatusText');
+
+    // Auto-reload webpage when ESP32 starts a new active tracking session
+    if (previousActiveState === false && isActive === true) {
+      console.log("Tracker activated! Auto-reloading page...");
+      window.location.reload();
+      return;
+    }
+    previousActiveState = isActive;
 
     if (isActive) {
       indicator.className = 'status-indicator active';
