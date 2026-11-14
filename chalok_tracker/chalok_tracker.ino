@@ -1,0 +1,822 @@
+/*
+  =============================================================================
+  CHALOK LIVE GPS TRACKER - POWER-STABILIZED (NO A-GNSS)
+  =============================================================================
+  Board: ESP32 Dev Module (classic ESP32 with GPIO16/17 available)
+  Libraries required:
+    - LiquidCrystal_I2C (by Frank de Brabander)
+    - TinyGPSPlus (by Mikal Hart)
+    - Built-in ESP32: Wire, SPI, SD, WiFi, HTTPClient
+
+  Hardware Pinout:
+    - GPS NEO-M8N: RX2=GPIO16 (ESP32 RX <- GPS TX), TX2=GPIO17 (ESP32 TX -> GPS RX)
+    - I2C Bus: SDA=GPIO21, SCL=GPIO22 (Shared by LCD 0x27 and MPU6050 0x68)
+    - Status LEDs: GPIO4, GPIO5, GPIO18, GPIO19
+    - Active Buzzer: GPIO25 (Active HIGH)
+    - Push Buttons (to GND with internal PULLUP):
+        * BUTTON_1 = GPIO23 (START Live Sharing)
+        * BUTTON_2 = GPIO32 (STOP Live Sharing)
+    - MicroSD SPI: SCK=GPIO14, MISO=GPIO27, MOSI=GPIO26, CS=GPIO13
+    - Master Power: Hardware power toggle switch to shut off ESP32
+
+  Power-Saving & Brownout-Prevention Optimizations:
+    - A-GNSS AssistNow download removed (stops heavy boot-time current draw).
+    - Telemetry interval relaxed to 3 seconds (cuts Wi-Fi radio active duty cycle by 66%).
+    - Decoupled button network sync (buttons react instantly in 0ms without freezing loop).
+    - Standalone NEO-M8N autonomous multi-constellation mode (GPS + GLONASS).
+  =============================================================================
+*/
+
+#include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <TinyGPS++.h>
+#include <SPI.h>
+#include <SD.h>
+#include <esp_random.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+// ======================================================
+// HARDWARE PIN DEFINITIONS
+// ======================================================
+constexpr uint8_t GPS_RX = 16;
+constexpr uint8_t GPS_TX = 17;
+constexpr uint8_t SDA_PIN = 21;
+constexpr uint8_t SCL_PIN = 22;
+constexpr uint8_t LED_PINS[] = {4, 5, 18, 19};
+constexpr uint8_t BUZZER_PIN = 25;
+constexpr uint8_t BUTTON_1 = 23;  // START SHARING
+constexpr uint8_t BUTTON_2 = 32;  // STOP SHARING
+constexpr uint8_t SD_SCK = 14;
+constexpr uint8_t SD_MISO = 27;
+constexpr uint8_t SD_MOSI = 26;
+constexpr uint8_t SD_CS = 13;
+
+// ======================================================
+// WI-FI & FIREBASE CONFIGURATION
+// ======================================================
+// 2.4 GHz Wi-Fi hotspot credentials for the ZTE modem
+const char *WIFI_SSID = "chalok_device1";
+const char *WIFI_PASSWORD = "chalokapp";
+constexpr uint32_t WIFI_RETRY_MS = 10000;
+
+// Firebase Realtime Database Endpoint
+const char *FIREBASE_HOST = "https://track-test-4ddde-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+// 3-second update interval: prevents voltage droop / brownout on battery
+constexpr uint32_t FIREBASE_TELEMETRY_INTERVAL_MS = 3000;
+
+// I2C Addresses & LCD Setup
+constexpr uint8_t LCD_ADDRESS = 0x27;
+constexpr uint8_t LCD_COLS = 16;
+constexpr uint8_t LCD_ROWS = 2;
+constexpr uint8_t MPU_ADDRESS = 0x68;
+
+// Timing & Thresholds
+constexpr uint8_t LED_COUNT = sizeof(LED_PINS) / sizeof(LED_PINS[0]);
+constexpr uint32_t GPS_TIMEOUT_MS = 5000;
+constexpr uint32_t PAGE_TIME_MS = 2600;
+constexpr uint32_t LED_STEP_MS = 1000;
+constexpr uint32_t BEEP_ON_MS = 180;
+constexpr uint32_t BEEP_GAP_MS = 150;
+constexpr uint32_t LOG_INTERVAL_MS = 15000; // Log to SD every 15s to save power
+constexpr uint32_t SD_MESSAGE_MS = 2000;
+constexpr double JOURNEY_DISTANCE_METERS = 2.5;
+
+// ======================================================
+// GLOBAL OBJECTS & STATE
+// ======================================================
+LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
+HardwareSerial gpsPort(2);
+TinyGPSPlus gps;
+
+enum Page {
+  LCD_INFO,
+  WIFI_STATUS,
+  GPS_STATUS,
+  GPS_COORDS,
+  MPU_TILT,
+  MPU_TOTAL_TILT,
+  MPU_RAW,
+  BUTTONS,
+  OUTPUTS,
+  PAGE_COUNT
+};
+
+struct Button {
+  uint8_t pin;
+  bool rawPressed;
+  bool pressed;
+  uint32_t changedAt;
+  uint32_t presses;
+};
+
+struct LogSnapshot {
+  char text[640];
+};
+
+struct LogResult {
+  bool ok;
+  char fileName[13];
+  const char *message;
+};
+
+Button buttons[] = {
+  {BUTTON_1, false, false, 0, 0},  // Button 1: Start Sharing
+  {BUTTON_2, false, false, 0, 0}   // Button 2: Stop Sharing
+};
+
+// System & Sensor States
+bool sharingActive = true;       // Active on boot; controllable via B1 & B2
+bool pendingActiveSync = false;  // Flag to sync active status asynchronously
+bool wasWifiConnected = false;
+bool lcdFound = false;
+bool mpuReady = false;
+bool mpuSampleValid = false;
+
+float tiltDegrees = 0.0f;
+float rollXDegrees = 0.0f;
+float pitchYDegrees = 0.0f;
+float accelXg = 0.0f;
+float accelYg = 0.0f;
+float accelZg = 0.0f;
+
+double lastKnownLat = 23.718382; // Fallback to last known position
+double lastKnownLng = 90.384001;
+double lastWebJourneyLat = 0.0;
+double lastWebJourneyLng = 0.0;
+bool hasWebJourneyPoint = false;
+
+bool wifiStarted = false;
+uint32_t lastWifiAttemptAt = 0;
+bool gpsReceived = false;
+uint32_t lastGpsByteAt = 0;
+uint32_t lastNmeaAt = 0;
+uint32_t lastMpuAt = 0;
+uint32_t lastLcdAt = 0;
+uint32_t lastFirebaseTelemetryAt = 0;
+uint32_t pageSince = 0;
+Page page = LCD_INFO;
+
+uint8_t ledIndex = 0;
+uint32_t ledStepAt = 0;
+bool buzzerOn = false;
+uint32_t beepsPending = 0;
+uint32_t buzzerEdgeAt = 0;
+
+QueueHandle_t logQueue = nullptr;
+QueueHandle_t logResultQueue = nullptr;
+uint32_t lastLogAt = 0;
+uint32_t logMessageAt = 0;
+bool showLogMessage = false;
+LogResult lastLogResult = {};
+
+// ======================================================
+// PIN UNIQUE VALIDATION
+// ======================================================
+constexpr bool gpioAssignmentsAreUnique() {
+  const uint8_t pins[] = {
+    GPS_RX, GPS_TX, SDA_PIN, SCL_PIN, BUZZER_PIN, BUTTON_1, BUTTON_2,
+    SD_SCK, SD_MISO, SD_MOSI, SD_CS
+  };
+  uint64_t used = 0;
+  for (uint8_t pin : pins) {
+    const uint64_t mask = 1ULL << pin;
+    if (used & mask) return false;
+    used |= mask;
+  }
+  for (uint8_t pin : LED_PINS) {
+    const uint64_t mask = 1ULL << pin;
+    if (used & mask) return false;
+    used |= mask;
+  }
+  return true;
+}
+static_assert(gpioAssignmentsAreUnique(), "GPIO conflict: assign each signal a separate pin.");
+
+// ======================================================
+// HAVERSINE DISTANCE FORMULA
+// ======================================================
+double distanceMeters(double lat1, double lon1, double lat2, double lon2) {
+  constexpr double EARTH_RADIUS = 6371000.0;
+  double dLat = radians(lat2 - lat1);
+  double dLon = radians(lon2 - lon1);
+  double a = sin(dLat / 2.0) * sin(dLat / 2.0) +
+             cos(radians(lat1)) * cos(radians(lat2)) *
+             sin(dLon / 2.0) * sin(dLon / 2.0);
+  double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+  return EARTH_RADIUS * c;
+}
+
+// ======================================================
+// FIREBASE REST API HELPERS
+// ======================================================
+bool firebasePUT(const String &path, const String &json) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  HTTPClient http;
+  String url = String(FIREBASE_HOST) + path + ".json";
+  http.begin(url);
+  http.setTimeout(1500);
+  http.addHeader("Content-Type", "application/json");
+
+  int httpCode = http.PUT(json);
+  http.end();
+  return (httpCode >= 200 && httpCode < 300);
+}
+
+bool firebasePOST(const String &path, const String &json) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  HTTPClient http;
+  String url = String(FIREBASE_HOST) + path + ".json";
+  http.begin(url);
+  http.setTimeout(1500);
+  http.addHeader("Content-Type", "application/json");
+
+  int httpCode = http.POST(json);
+  http.end();
+  return (httpCode >= 200 && httpCode < 300);
+}
+
+void syncActiveStatusToFirebase() {
+  String json = sharingActive ? "true" : "false";
+  firebasePUT("/tracker/active", json);
+}
+
+// ======================================================
+// I2C & MPU6050 ROUTINES
+// ======================================================
+bool i2cPresent(uint8_t address) {
+  Wire.beginTransmission(address);
+  return Wire.endTransmission() == 0;
+}
+
+bool readMpu(uint8_t reg, uint8_t *data, uint8_t size) {
+  Wire.beginTransmission(MPU_ADDRESS);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(MPU_ADDRESS, size) != size) {
+    return false;
+  }
+  for (uint8_t i = 0; i < size; ++i) {
+    data[i] = Wire.read();
+  }
+  return true;
+}
+
+bool writeMpu(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(MPU_ADDRESS);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+void sampleMpu() {
+  if (!mpuReady) {
+    uint8_t id = 0;
+    if (!readMpu(0x75, &id, 1) || (id != 0x68 && id != 0x70) ||
+        !writeMpu(0x6B, 0x01) || !writeMpu(0x1C, 0x00)) {
+      return;
+    }
+    mpuReady = true;
+    return;
+  }
+
+  uint8_t raw[6];
+  if (!readMpu(0x3B, raw, sizeof(raw))) {
+    mpuReady = false;
+    mpuSampleValid = false;
+    return;
+  }
+  const float x = static_cast<int16_t>((raw[0] << 8) | raw[1]);
+  const float y = static_cast<int16_t>((raw[2] << 8) | raw[3]);
+  const float z = static_cast<int16_t>((raw[4] << 8) | raw[5]);
+
+  accelXg = x / 16384.0f;
+  accelYg = y / 16384.0f;
+  accelZg = z / 16384.0f;
+
+  rollXDegrees = atan2f(y, z) * RAD_TO_DEG;
+  pitchYDegrees = atan2f(-x, sqrtf(y * y + z * z)) * RAD_TO_DEG;
+  tiltDegrees = atan2f(hypotf(x, y), z) * RAD_TO_DEG;
+  mpuSampleValid = (x != 0 || y != 0 || z != 0);
+}
+
+// ======================================================
+// WI-FI CONNECTION HANDLER (POWER-OPTIMIZED)
+// ======================================================
+void updateWifi(uint32_t now) {
+  bool currentConnected = (WiFi.status() == WL_CONNECTED);
+
+  if (!wifiStarted) {
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    // Lower RF TX power to 15dBm (prevents 450mA current spikes that trigger brownouts)
+    WiFi.setTxPower(WIFI_POWER_15dBm);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    wifiStarted = true;
+    lastWifiAttemptAt = now;
+  } else if (!currentConnected && (now - lastWifiAttemptAt >= WIFI_RETRY_MS)) {
+    lastWifiAttemptAt = now;
+    wl_status_t st = WiFi.status();
+    // Only re-initiate if completely disconnected or failed (avoids "sta is connecting" error)
+    if (st == WL_CONNECT_FAILED || st == WL_CONNECTION_LOST || st == WL_NO_SSID_AVAIL) {
+      WiFi.disconnect();
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    }
+  }
+
+  if (currentConnected && !wasWifiConnected) {
+    pendingActiveSync = true;
+  }
+  wasWifiConnected = currentConnected;
+}
+
+// ======================================================
+// GPS PARSER & DIAGNOSTICS
+// ======================================================
+void readGps() {
+  while (gpsPort.available()) {
+    gpsReceived = true;
+    lastGpsByteAt = millis();
+    if (gps.encode(gpsPort.read())) {
+      lastNmeaAt = lastGpsByteAt;
+    }
+  }
+}
+
+bool gpsHasNmea(uint32_t now) {
+  return gps.passedChecksum() > 0 && now - lastNmeaAt < GPS_TIMEOUT_MS;
+}
+
+bool gpsHasFix(uint32_t now) {
+  return gpsHasNmea(now) && gps.location.isValid() && gps.location.age() < GPS_TIMEOUT_MS;
+}
+
+const char *gpsStatus(uint32_t now) {
+  if (gpsHasFix(now)) return "Fix OK";
+  if (gpsHasNmea(now)) return "Waiting for fix";
+  if (gpsReceived && now - lastGpsByteAt < GPS_TIMEOUT_MS) return "No valid NMEA";
+  return "No UART data";
+}
+
+// ======================================================
+// TELEMETRY TRANSMITTER (FIREBASE LIVE SYNC)
+// ======================================================
+void updateFirebaseTelemetry(uint32_t now) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // Sync active status flag asynchronously without locking buttons
+  if (pendingActiveSync) {
+    syncActiveStatusToFirebase();
+    pendingActiveSync = false;
+  }
+
+  if (!sharingActive) return;
+  if (now - lastFirebaseTelemetryAt < FIREBASE_TELEMETRY_INTERVAL_MS) return;
+  lastFirebaseTelemetryAt = now;
+
+  double lat = lastKnownLat;
+  double lng = lastKnownLng;
+  double speedKmh = 0.0;
+  uint32_t satellites = 0;
+  double hdop = 99.0;
+
+  if (gps.location.isValid()) {
+    lat = gps.location.lat();
+    lng = gps.location.lng();
+    lastKnownLat = lat;
+    lastKnownLng = lng;
+  }
+  if (gps.speed.isValid()) {
+    speedKmh = gps.speed.kmph();
+    if (speedKmh < 1.0) speedKmh = 0.0; // Clamp stationary jitter
+  }
+  if (gps.satellites.isValid()) {
+    satellites = gps.satellites.value();
+  }
+  if (gps.hdop.isValid()) {
+    hdop = gps.hdop.hdop();
+  }
+
+  // 1. Build live telemetry payload (continuous Tilt, Roll, Pitch included)
+  String payload = "{";
+  payload += "\"lat\":" + String(lat, 6) + ",";
+  payload += "\"lng\":" + String(lng, 6) + ",";
+  payload += "\"speedKmh\":" + String(speedKmh, 1) + ",";
+  payload += "\"satellites\":" + String(satellites) + ",";
+  payload += "\"hdop\":" + String(hdop, 1) + ",";
+  payload += "\"tilt\":" + String(tiltDegrees, 1) + ",";
+  payload += "\"roll\":" + String(rollXDegrees, 1) + ",";
+  payload += "\"pitch\":" + String(pitchYDegrees, 1) + ",";
+  payload += "\"timestamp\":" + String(now);
+  payload += "}";
+
+  firebasePUT("/tracker/current", payload);
+
+  // 2. Journey point logging (recorded only when GPS has a valid fix & moved >= 2.5m)
+  if (gpsHasFix(now)) {
+    double distMoved = 0.0;
+    if (hasWebJourneyPoint) {
+      distMoved = distanceMeters(lastWebJourneyLat, lastWebJourneyLng, lat, lng);
+    }
+
+    if (!hasWebJourneyPoint || distMoved >= JOURNEY_DISTANCE_METERS) {
+      String ptPayload = "{";
+      ptPayload += "\"lat\":" + String(lat, 6) + ",";
+      ptPayload += "\"lng\":" + String(lng, 6) + ",";
+      ptPayload += "\"speedKmh\":" + String(speedKmh, 1) + ",";
+      ptPayload += "\"tilt\":" + String(tiltDegrees, 1) + ",";
+      ptPayload += "\"timestamp\":" + String(now);
+      ptPayload += "}";
+
+      firebasePOST("/tracker/journey", ptPayload);
+      lastWebJourneyLat = lat;
+      lastWebJourneyLng = lng;
+      hasWebJourneyPoint = true;
+    }
+  }
+}
+
+// ======================================================
+// LCD UI & HELPERS
+// ======================================================
+void showPage(Page next) {
+  page = next;
+  pageSince = millis();
+}
+
+void lcdLine(uint8_t row, const char *line) {
+  char padded[LCD_COLS + 1];
+  snprintf(padded, sizeof(padded), "%-*.*s", LCD_COLS, LCD_COLS, line);
+  lcd.setCursor(0, row);
+  lcd.print(padded);
+}
+
+void refreshLcd(uint32_t now) {
+  if (!lcdFound) return;
+  if (showLogMessage && now - logMessageAt < SD_MESSAGE_MS) {
+    lcdLine(0, lastLogResult.ok ? "SD SAVE OK" : "SD SAVE ERROR");
+    lcdLine(1, lastLogResult.ok ? lastLogResult.fileName : lastLogResult.message);
+    return;
+  }
+  showLogMessage = false;
+  if (now - pageSince >= PAGE_TIME_MS) {
+    page = static_cast<Page>((page + 1) % PAGE_COUNT);
+    pageSince = now;
+  }
+
+  char top[32] = "";
+  char bottom[32] = "";
+  switch (page) {
+    case LCD_INFO:
+      snprintf(top, sizeof(top), "CHALOK TRACKER");
+      snprintf(bottom, sizeof(bottom), "Share: %s", sharingActive ? "ACTIVE" : "STOPPED");
+      break;
+
+    case WIFI_STATUS:
+      if (WiFi.status() == WL_CONNECTED) {
+        IPAddress ip = WiFi.localIP();
+        snprintf(top, sizeof(top), "WiFi CONNECTED");
+        snprintf(bottom, sizeof(bottom), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+      } else {
+        snprintf(top, sizeof(top), "WiFi CONNECTING");
+        snprintf(bottom, sizeof(bottom), "Check ZTE 2.4G");
+      }
+      break;
+
+    case GPS_STATUS:
+      if (gpsHasNmea(now) && gps.satellites.isValid() && gps.satellites.age() < GPS_TIMEOUT_MS) {
+        if (gps.hdop.isValid() && gps.hdop.age() < GPS_TIMEOUT_MS) {
+          snprintf(top, sizeof(top), "S:%02lu H:%1.1f",
+                   static_cast<unsigned long>(gps.satellites.value()), gps.hdop.hdop());
+        } else {
+          snprintf(top, sizeof(top), "Satellites:%lu", static_cast<unsigned long>(gps.satellites.value()));
+        }
+      } else {
+        snprintf(top, sizeof(top), "GPS: no sat data");
+      }
+      snprintf(bottom, sizeof(bottom), "%s", gpsStatus(now));
+      break;
+
+    case GPS_COORDS:
+      if (gpsHasFix(now)) {
+        snprintf(top, sizeof(top), "Lat %+.5f", gps.location.lat());
+        snprintf(bottom, sizeof(bottom), "Lon %+.5f", gps.location.lng());
+      } else {
+        snprintf(top, sizeof(top), "GPS coordinates");
+        snprintf(bottom, sizeof(bottom), "Waiting for fix");
+      }
+      break;
+
+    case MPU_TILT:
+      if (mpuSampleValid) {
+        snprintf(top, sizeof(top), "Roll X:%+5.1f", rollXDegrees);
+        snprintf(bottom, sizeof(bottom), "PitchY:%+5.1f", pitchYDegrees);
+      } else {
+        snprintf(top, sizeof(top), "MPU6050 AXES");
+        snprintf(bottom, sizeof(bottom), mpuReady ? "No valid sample" : "Read/ID error");
+      }
+      break;
+
+    case MPU_TOTAL_TILT:
+      snprintf(top, sizeof(top), "Total tilt");
+      if (mpuSampleValid) snprintf(bottom, sizeof(bottom), "%5.1f degrees", tiltDegrees);
+      else snprintf(bottom, sizeof(bottom), "Waiting sample");
+      break;
+
+    case MPU_RAW:
+      if (mpuSampleValid) {
+        snprintf(top, sizeof(top), "Accel X:%+.2fg", accelXg);
+        snprintf(bottom, sizeof(bottom), "Y:%+.2f Z:%+.2f", accelYg, accelZg);
+      } else {
+        snprintf(top, sizeof(top), "MPU raw axes");
+        snprintf(bottom, sizeof(bottom), "Waiting sample");
+      }
+      break;
+
+    case BUTTONS:
+      snprintf(top, sizeof(top), "B1:START  B2:STOP");
+      snprintf(bottom, sizeof(bottom), "Share:%s", sharingActive ? "ACTIVE" : "STOPPED");
+      break;
+
+    case OUTPUTS:
+      snprintf(top, sizeof(top), "LED %u GPIO%u ON", ledIndex + 1, LED_PINS[ledIndex]);
+      snprintf(bottom, sizeof(bottom), "Buzzer %s", buzzerOn ? "ON" : "OFF");
+      break;
+
+    case PAGE_COUNT:
+      break;
+  }
+  lcdLine(0, top);
+  lcdLine(1, bottom);
+}
+
+// ======================================================
+// BUTTONS & HARDWARE OUTPUTS (INSTANT RESPONSE)
+// ======================================================
+void readButtons(uint32_t now) {
+  for (uint8_t i = 0; i < 2; ++i) {
+    Button &button = buttons[i];
+    bool pressed = (digitalRead(button.pin) == LOW);
+
+    if (pressed != button.rawPressed) {
+      button.rawPressed = pressed;
+      button.changedAt = now;
+    }
+    if (pressed == button.pressed || now - button.changedAt < 35) continue;
+    button.pressed = pressed;
+
+    if (pressed) {
+      ++button.presses;
+
+      if (i == 0) {
+        // BUTTON_1 (GPIO 23): START LIVE SHARING
+        sharingActive = true;
+        pendingActiveSync = true;
+        beepsPending += 1;
+        if (lcdFound) lcd.backlight(); // Turn LCD display LED ON
+      } else {
+        // BUTTON_2 (GPIO 32): STOP LIVE SHARING
+        sharingActive = false;
+        pendingActiveSync = true;
+        beepsPending += 2;
+        if (lcdFound) lcd.noBacklight(); // Turn LCD display LED OFF (saves ~40mA battery!)
+      }
+
+      showPage(BUTTONS);
+    }
+  }
+}
+
+void updateLeds(uint32_t now) {
+  if (now - ledStepAt < LED_STEP_MS) return;
+  ledStepAt = now;
+  digitalWrite(LED_PINS[ledIndex], LOW);
+  ledIndex = (ledIndex + 1) % LED_COUNT;
+  digitalWrite(LED_PINS[ledIndex], HIGH);
+}
+
+void updateBuzzer(uint32_t now) {
+  if (buzzerOn && now - buzzerEdgeAt >= BEEP_ON_MS) {
+    digitalWrite(BUZZER_PIN, LOW);
+    buzzerOn = false;
+    buzzerEdgeAt = now;
+  } else if (!buzzerOn && beepsPending > 0 && now - buzzerEdgeAt >= BEEP_GAP_MS) {
+    --beepsPending;
+    digitalWrite(BUZZER_PIN, HIGH);
+    buzzerOn = true;
+    buzzerEdgeAt = now;
+  }
+}
+
+// ======================================================
+// SD CARD BACKGROUND LOGGER (FREERTOS WORKER)
+// ======================================================
+void formatSnapshot(LogSnapshot &snapshot, uint32_t now) {
+  char satellites[16] = "N/A";
+  char hdop[16] = "N/A";
+  char location[64] = "N/A";
+  char mpu[100] = "N/A";
+
+  if (gpsHasNmea(now) && gps.satellites.isValid() && gps.satellites.age() < GPS_TIMEOUT_MS) {
+    snprintf(satellites, sizeof(satellites), "%lu", static_cast<unsigned long>(gps.satellites.value()));
+  }
+  if (gpsHasNmea(now) && gps.hdop.isValid() && gps.hdop.age() < GPS_TIMEOUT_MS) {
+    snprintf(hdop, sizeof(hdop), "%.2f", gps.hdop.hdop());
+  }
+  if (gpsHasFix(now)) {
+    snprintf(location, sizeof(location), "lat=%.6f lon=%.6f", gps.location.lat(), gps.location.lng());
+  }
+  if (mpuSampleValid) {
+    snprintf(mpu, sizeof(mpu), "rollX=%.2f pitchY=%.2f totalTilt=%.2f accel_g=%.3f,%.3f,%.3f",
+             rollXDegrees, pitchYDegrees, tiltDegrees, accelXg, accelYg, accelZg);
+  }
+
+  snprintf(snapshot.text, sizeof(snapshot.text),
+           "CHALOK status | uptime_ms=%lu | SHARING=%s\n"
+           "[LCD] 0x27 %s\n"
+           "[WiFi] %s\n"
+           "[GPS] %s | satellites=%s | HDOP=%s | %s\n"
+           "[GPS] bytes=%lu valid_NMEA=%lu bad_checksum=%lu\n"
+           "[MPU6050] %s\n"
+           "[BUTTON] B1(Start)=%s count=%lu | B2(Stop)=%s count=%lu\n"
+           "[LED] LED %u GPIO%u ON\n"
+           "[BUZZER] %s\n",
+           static_cast<unsigned long>(now),
+           sharingActive ? "ACTIVE" : "STOPPED",
+           lcdFound ? "ACK at startup" : "no ACK at startup",
+           WiFi.status() == WL_CONNECTED ? "connected" : "disconnected",
+           gpsStatus(now), satellites, hdop, location,
+           static_cast<unsigned long>(gps.charsProcessed()),
+           static_cast<unsigned long>(gps.passedChecksum()),
+           static_cast<unsigned long>(gps.failedChecksum()), mpu,
+           buttons[0].pressed ? "DOWN" : "UP", static_cast<unsigned long>(buttons[0].presses),
+           buttons[1].pressed ? "DOWN" : "UP", static_cast<unsigned long>(buttons[1].presses),
+           ledIndex + 1, LED_PINS[ledIndex], buzzerOn ? "ON" : "OFF");
+}
+
+const char *saveSnapshot(const LogSnapshot &snapshot, char *fileName, uint32_t &nextId) {
+  char finalPath[14];
+  char tempPath[14];
+  do {
+    unsigned long id = nextId++;
+    snprintf(finalPath, sizeof(finalPath), "/%08lX.TXT", id);
+    snprintf(tempPath, sizeof(tempPath), "/%08lX.TMP", id);
+  } while (SD.exists(finalPath) || SD.exists(tempPath));
+
+  File file = SD.open(tempPath, FILE_WRITE);
+  if (!file) return "Open failed";
+  size_t length = strlen(snapshot.text);
+  bool written = file.write(reinterpret_cast<const uint8_t *>(snapshot.text), length) == length;
+  file.close();
+
+  File saved = SD.open(tempPath, FILE_READ);
+  char readBack[sizeof(snapshot.text)];
+  bool verified = written && saved && saved.size() == length &&
+                  saved.read(reinterpret_cast<uint8_t *>(readBack), length) == length &&
+                  memcmp(readBack, snapshot.text, length) == 0;
+  saved.close();
+
+  if (!verified || !SD.rename(tempPath, finalPath)) {
+    SD.remove(tempPath);
+    return verified ? "Rename failed" : "Write failed";
+  }
+  strcpy(fileName, finalPath + 1);
+  return nullptr;
+}
+
+void logWorker(void *) {
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  bool mounted = false;
+  uint32_t nextId = esp_random();
+  LogSnapshot snapshot;
+  for (;;) {
+    if (xQueueReceive(logQueue, &snapshot, portMAX_DELAY) != pdTRUE) continue;
+    LogResult result = {};
+    if (!mounted) mounted = SD.begin(SD_CS, SPI);
+    if (mounted) {
+      result.message = saveSnapshot(snapshot, result.fileName, nextId);
+      result.ok = (result.message == nullptr);
+      if (!result.ok) {
+        SD.end();
+        mounted = false;
+      }
+    } else {
+      result.message = "Card mount fail";
+    }
+    xQueueOverwrite(logResultQueue, &result);
+  }
+}
+
+void showSdResult(const LogResult &result) {
+  lastLogResult = result;
+  logMessageAt = millis();
+  showLogMessage = true;
+}
+
+void updateLogging(uint32_t now) {
+  LogResult result;
+  if (logResultQueue && xQueueReceive(logResultQueue, &result, 0) == pdTRUE) {
+    showSdResult(result);
+  }
+  if (now - lastLogAt < LOG_INTERVAL_MS) return;
+  lastLogAt = now - (now - lastLogAt) % LOG_INTERVAL_MS;
+  if (!logQueue) {
+    showSdResult({false, "", "Logger offline"});
+    return;
+  }
+  LogSnapshot snapshot;
+  formatSnapshot(snapshot, now);
+  if (xQueueSend(logQueue, &snapshot, 0) != pdTRUE) {
+    showSdResult({false, "", "Card busy"});
+  }
+}
+
+// ======================================================
+// ARDUINO SETUP & LOOP
+// ======================================================
+void setup() {
+  // LEDs & Buzzer
+  for (uint8_t pin : LED_PINS) {
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+  }
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Buttons with internal PULLUP
+  for (const Button &button : buttons) {
+    pinMode(button.pin, INPUT_PULLUP);
+  }
+
+  // I2C for LCD & MPU6050
+  Wire.begin(SDA_PIN, SCL_PIN, 100000);
+  Wire.setTimeOut(40);
+  lcdFound = i2cPresent(LCD_ADDRESS);
+  if (lcdFound) {
+    lcd.init();
+    lcd.backlight();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("CHALOK TRACKER");
+    lcd.setCursor(0, 1);
+    lcd.print("Starting...");
+  }
+
+  // Start Wi-Fi
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  wifiStarted = true;
+  lastWifiAttemptAt = millis();
+
+  // NEO-M8N GPS HardwareSerial with 1024-byte buffer
+  gpsPort.setRxBufferSize(1024);
+  gpsPort.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
+
+  // FreeRTOS SD Logging Worker
+  logQueue = xQueueCreate(1, sizeof(LogSnapshot));
+  logResultQueue = xQueueCreate(1, sizeof(LogResult));
+  if (!logQueue || !logResultQueue ||
+      xTaskCreate(logWorker, "SD logger", 6144, nullptr, 1, nullptr) != pdPASS) {
+    if (logQueue) vQueueDelete(logQueue);
+    if (logResultQueue) vQueueDelete(logResultQueue);
+    logQueue = nullptr;
+    logResultQueue = nullptr;
+    showSdResult({false, "", "Logger offline"});
+  }
+
+  digitalWrite(LED_PINS[ledIndex], HIGH);
+  showPage(LCD_INFO);
+  ledStepAt = pageSince;
+  lastLogAt = pageSince;
+  refreshLcd(pageSince);
+}
+
+void loop() {
+  readGps();
+
+  uint32_t now = millis();
+  updateWifi(now);
+  updateLeds(now);
+  readButtons(now);
+  updateBuzzer(now);
+
+  now = millis();
+  if (now - lastMpuAt >= 200) {
+    lastMpuAt = now;
+    sampleMpu();
+  }
+
+  updateFirebaseTelemetry(now);
+  updateLogging(now);
+
+  now = millis();
+  if (now - lastLcdAt >= 200) {
+    lastLcdAt = now;
+    refreshLcd(now);
+  }
+}

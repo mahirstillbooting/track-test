@@ -186,6 +186,15 @@ function setupFirebaseListeners() {
     document.getElementById('satsVal').textContent = sats;
     document.getElementById('hdopVal').textContent = Number(hdop).toFixed(1);
 
+    // Update Vehicle Tilt & Attitudes (from MPU6050)
+    const tilt = data.tilt !== undefined ? data.tilt : (data.totalTilt !== undefined ? data.totalTilt : 0);
+    const roll = data.roll !== undefined ? data.roll : (data.rollX !== undefined ? data.rollX : 0);
+    const pitch = data.pitch !== undefined ? data.pitch : (data.pitchY !== undefined ? data.pitchY : 0);
+    const tiltEl = document.getElementById('tiltVal');
+    if (tiltEl) tiltEl.textContent = Number(tilt).toFixed(1);
+    const tiltDetailEl = document.getElementById('tiltDetail');
+    if (tiltDetailEl) tiltDetailEl.textContent = `Roll: ${Number(roll).toFixed(1)}° | Pitch: ${Number(pitch).toFixed(1)}°`;
+
     // Format last update timestamp safely (Fixes 1970 date bug for ESP32 millis() & test data)
     let timeString = '';
     const now = new Date();
