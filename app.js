@@ -36,11 +36,34 @@ function initMap() {
     attributionControl: true
   }).setView([defaultLat, defaultLng], 15);
 
-  // Esri World Street Map Tile Layer (Open, reliable, no API key required)
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+  // High-Detail Base Layers (Render all alleys, road numbers, and street names)
+  const detailedStreets = L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+    maxZoom: 20,
+    subdomains: '0123',
+    attribution: '&copy; Google Maps'
+  });
+
+  const osmHumanitarian = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China, TomTom'
-  }).addTo(map);
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  });
+
+  const satelliteHybrid = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+    maxZoom: 20,
+    subdomains: '0123',
+    attribution: '&copy; Google Maps Satellite'
+  });
+
+  // Set Detailed Streets as default
+  detailedStreets.addTo(map);
+
+  // Layer control to easily toggle between Detailed Streets, OSM, and Satellite
+  const baseMaps = {
+    "Detailed Streets": detailedStreets,
+    "OSM Humanitarian": osmHumanitarian,
+    "Satellite Hybrid": satelliteHybrid
+  };
+  L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
 
   // Custom DivIcon for Tracker Marker
   const trackerIcon = L.divIcon({

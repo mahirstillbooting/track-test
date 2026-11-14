@@ -223,6 +223,30 @@ body {
   color: var(--accent-blue);
 }
 
+/* Leaflet Layer Switcher Dark Theme */
+.leaflet-control-layers {
+  background: var(--bg-card) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+  padding: 8px 12px !important;
+}
+.leaflet-control-layers-expanded {
+  background: var(--bg-card) !important;
+  color: var(--text-main) !important;
+}
+.leaflet-control-layers label {
+  color: var(--text-main) !important;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+.leaflet-control-layers-separator {
+  border-top: 1px solid var(--border-color) !important;
+}
+
 /* Controls & Metrics */
 .controls-section {
   display: flex;
