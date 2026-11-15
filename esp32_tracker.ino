@@ -81,8 +81,9 @@ constexpr uint8_t MPU_ADDRESS = 0x68;
 // Timing Constants
 constexpr uint32_t GPS_TIMEOUT_MS  = 5000;
 constexpr uint32_t PAGE_TIME_MS    = 2800;
-constexpr uint32_t BEEP_ON_MS      = 120;
-constexpr uint32_t BEEP_GAP_MS     = 100;
+constexpr uint32_t BEEP_ON_MS      = 60;   // 60ms crisp pip
+constexpr uint32_t BEEP_GAP_MS     = 60;   // 60ms gap between pips
+constexpr uint32_t CONFIRM_MSG_MS  = 1800; // 1.8s confirmation display
 constexpr uint32_t LOG_INTERVAL_MS = 15000;
 constexpr uint32_t SD_MESSAGE_MS   = 2000;
 
@@ -200,6 +201,27 @@ constexpr bool gpioAssignmentsAreUnique() {
 static_assert(gpioAssignmentsAreUnique(), "GPIO conflict: assign each signal a separate pin.");
 
 // ======================================================
+// LCD CONFIRMATION HELPER (FORWARD DECLARATIONS & ENGINE)
+// ======================================================
+bool showConfirmMessage   = false;
+uint32_t confirmMessageAt = 0;
+char confirmTop[17]       = "";
+char confirmBottom[17]    = "";
+
+void lcdLine(uint8_t row, const char *line);
+
+void lcdConfirmation(const char *top, const char *bottom) {
+  strncpy(confirmTop, top, sizeof(confirmTop) - 1);
+  confirmTop[sizeof(confirmTop) - 1] = '\0';
+  strncpy(confirmBottom, bottom, sizeof(confirmBottom) - 1);
+  confirmBottom[sizeof(confirmBottom) - 1] = '\0';
+  confirmMessageAt = millis();
+  showConfirmMessage = true;
+  lcdLine(0, confirmTop);
+  lcdLine(1, confirmBottom);
+}
+
+// ======================================================
 // FIREBASE REST API HELPERS
 // ======================================================
 bool firebasePUT(const String &path, const String &json) {
@@ -217,8 +239,25 @@ bool firebasePUT(const String &path, const String &json) {
 }
 
 void syncActiveStatusToFirebase() {
-  String json = sharingActive ? "true" : "false";
-  firebasePUT("/tracker/active", json);
+  // Ensure buzzer is completely silent and pin is LOW while network request is in flight
+  digitalWrite(BUZZER_PIN, LOW);
+  buzzerOn = false;
+
+  bool ok = false;
+  if (WiFi.status() == WL_CONNECTED) {
+    String json = sharingActive ? "true" : "false";
+    ok = firebasePUT("/tracker/active", json);
+  }
+
+  // Confirmation obtained: deliver quick confirmation beeps and LCD text!
+  if (sharingActive) {
+    beepsPending = 2; // Exactly 2 quick crisp beeps (60ms ON, 60ms GAP)
+    lcdConfirmation("RIDE: ACTIVE", ok ? "Cloud Confirmed" : "Local Active");
+  } else {
+    beepsPending = 3; // Exactly 3 quick crisp beeps (60ms ON, 60ms GAP)
+    lcdConfirmation("RIDE: STOPPED", ok ? "Cloud Confirmed" : "Local Standby");
+  }
+  buzzerEdgeAt = millis();
 }
 
 // ======================================================
@@ -462,6 +501,14 @@ void lcdLine(uint8_t row, const char *line) {
 
 void refreshLcd(uint32_t now) {
   if (!lcdFound) return;
+
+  if (showConfirmMessage && now - confirmMessageAt < CONFIRM_MSG_MS) {
+    lcdLine(0, confirmTop);
+    lcdLine(1, confirmBottom);
+    return;
+  }
+  showConfirmMessage = false;
+
   if (showLogMessage && now - logMessageAt < SD_MESSAGE_MS) {
     lcdLine(0, lastLogResult.ok ? "SD SAVE OK" : "SD SAVE ERROR");
     lcdLine(1, lastLogResult.ok ? lastLogResult.fileName : lastLogResult.message);
@@ -586,14 +633,16 @@ void readButtons(uint32_t now) {
             else lcd.noBacklight();
           }
           b1TapCount = 0;
-          beepsPending = 1; // 1 quick chirp on toggle
-          buzzerOn = false;
+          beepsPending = 1; // 1 single quick chirp on toggle
+          buzzerEdgeAt = now;
+          lcdConfirmation("LCD BACKLIGHT", lcdBacklightState ? "Turned ON" : "Turned OFF");
         } else if (b1TapCount == 1) {
           // Normal START Sharing action (tap 1)
           if (!sharingActive) {
             sharingActive = true;
             pendingActiveSync = true;
-            beepsPending = 2; // 2 beeps on Start Sharing
+            beepsPending = 0; // DO NOT buzz while request in flight! Wait for confirmation
+            lcdConfirmation("START SHARING", "Syncing...");
           }
         }
       } else {
@@ -601,7 +650,8 @@ void readButtons(uint32_t now) {
         if (sharingActive) {
           sharingActive = false;
           pendingActiveSync = true;
-          beepsPending = 3; // 3 beeps on Stop Sharing
+          beepsPending = 0; // DO NOT buzz while request in flight! Wait for confirmation
+          lcdConfirmation("STOP SHARING", "Syncing...");
         }
         b1TapCount = 0;
       }
@@ -810,7 +860,6 @@ void loop() {
   updateWifi(now);
   updateStatusLeds(now);
   readButtons(now);
-  updateBuzzer(now);
 
   now = millis();
   if (now - lastMpuAt >= 200) {
@@ -819,6 +868,7 @@ void loop() {
   }
 
   updateFirebaseTelemetry(now);
+  updateBuzzer(millis());
   updateLogging(now);
 
   now = millis();
