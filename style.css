@@ -1008,8 +1008,8 @@ html, body {
 }
 
 .point-dot.start {
-  background: var(--gm-accent);
-  box-shadow: 0 0 6px var(--gm-accent);
+  background: #9b72cb;
+  box-shadow: 0 0 6px #9b72cb;
 }
 
 .point-dot.end {

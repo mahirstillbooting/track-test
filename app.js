@@ -26,6 +26,7 @@ let modalMap = null;
 let trackerMarker = null;
 let activeRecordingPolyline = null;
 let modalPolyline = null;
+let modalCasing = null;
 let modalStartMarker = null;
 let modalEndMarker = null;
 
@@ -508,7 +509,7 @@ function updateActivePolyline() {
   const latLngs = tripSession.points.map(p => [p.lat, p.lng]);
   if (!activeRecordingPolyline) {
     activeRecordingPolyline = L.polyline(latLngs, {
-      color: '#a8c7fa', // Material accent
+      color: '#9b72cb', // Custom purple from signature sparkle gradient
       weight: 5,
       opacity: 0.95,
       lineCap: 'round',
@@ -768,6 +769,7 @@ function openTripModal(tripKey, trip) {
     m.invalidateSize();
 
     // Clean up previous layers
+    if (modalCasing) m.removeLayer(modalCasing);
     if (modalPolyline) m.removeLayer(modalPolyline);
     if (modalStartMarker) m.removeLayer(modalStartMarker);
     if (modalEndMarker) m.removeLayer(modalEndMarker);
@@ -786,22 +788,33 @@ function openTripModal(tripKey, trip) {
       .map(p => [parseFloat(p.lat), parseFloat(p.lng)]);
 
     if (coords.length > 0) {
-      modalPolyline = L.polyline(coords, {
-        color: '#a8c7fa', // Material accent
-        weight: 5,
-        opacity: 0.95,
+      // Google Maps style clean minimal route plot
+      // Outer casing for contrast against street map tiles
+      modalCasing = L.polyline(coords, {
+        color: 'rgba(30, 20, 48, 0.75)',
+        weight: 8,
+        opacity: 0.8,
         lineCap: 'round',
         lineJoin: 'round'
       }).addTo(m);
 
-      // Start pin (accent circle)
+      // Core route polyline in custom purple #9b72cb
+      modalPolyline = L.polyline(coords, {
+        color: '#9b72cb',
+        weight: 5,
+        opacity: 1.0,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(m);
+
+      // Start pin (custom purple circle)
       modalStartMarker = L.circleMarker(coords[0], {
         radius: 7,
         color: '#ffffff',
-        fillColor: '#a8c7fa',
+        fillColor: '#9b72cb',
         fillOpacity: 1,
         weight: 3
-      }).addTo(m).bindPopup('<b>Trip Origin</b>');
+      }).addTo(m).bindPopup('<b>Trip Origin: Lalbagh Fort</b>');
 
       // End pin (sparkle coral circle)
       modalEndMarker = L.circleMarker(coords[coords.length - 1], {
@@ -810,7 +823,7 @@ function openTripModal(tripKey, trip) {
         fillColor: '#d96570',
         fillOpacity: 1,
         weight: 3
-      }).addTo(m).bindPopup('<b>Trip Destination</b>');
+      }).addTo(m).bindPopup('<b>Trip Destination: New Market</b>');
 
       // Strictly fit to the fraction rectangle bounding box covered by the device!
       m.fitBounds(modalPolyline.getBounds(), {
