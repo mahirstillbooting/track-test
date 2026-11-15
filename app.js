@@ -936,10 +936,16 @@ function openTripModal(tripKey, trip) {
       }).addTo(m).bindPopup(`<b>Destination:</b> ${destName}`);
 
       // Strictly fit to the fraction rectangle bounding box covered by the device!
+      const isMobile = window.innerWidth < 768;
       m.fitBounds(modalPolyline.getBounds(), {
-        padding: [45, 45],
+        padding: isMobile ? [20, 20] : [45, 45],
         maxZoom: 18
       });
+
+      // Extra staged invalidation for mobile devices
+      setTimeout(() => {
+        m.invalidateSize();
+      }, 400);
     }
   }, 200);
 }
