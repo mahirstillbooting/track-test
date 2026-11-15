@@ -1,5 +1,5 @@
 // =============================================================================
-// CHALOK LIVE GPS TRACKER - UBER OBSIDIAN ENGINE
+// CHALOK LIVE GPS TRACKER - GOOGLE MATERIAL DARK OBSIDIAN ENGINE
 // =============================================================================
 
 // 1. Firebase RTDB Configuration
@@ -69,10 +69,10 @@ function initMainMap() {
     attributionControl: true
   }).setView([defaultLat, defaultLng], 16);
 
-  // Position zoom controls nicely for mobile
+  // Position zoom controls nicely
   L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
-  // High-Detail Base Layers (Retaining Google Detailed Streets, OSM HOT, Hybrid)
+  // High-Detail Base Layers (Google Detailed Streets, OSM HOT, Hybrid)
   const detailedStreets = L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20,
     subdomains: '0123',
@@ -99,7 +99,7 @@ function initMainMap() {
   };
   L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
 
-  // Custom Emerald DivIcon for Vehicle Marker
+  // Custom DivIcon for Vehicle Marker (Using GM Accent / No Green)
   const trackerIcon = L.divIcon({
     className: 'custom-tracker-marker',
     html: `
@@ -123,6 +123,20 @@ function initMainMap() {
       map.flyTo([lastCoords.lat, lastCoords.lng], 17, { duration: 0.8 });
     }
   });
+
+  // Multiple staged size invalidations to ensure full rendering on phones
+  setTimeout(ensureMapRender, 100);
+  setTimeout(ensureMapRender, 300);
+  setTimeout(ensureMapRender, 800);
+}
+
+function ensureMapRender() {
+  if (map) {
+    map.invalidateSize();
+    if (lastCoords.lat !== null && lastCoords.lng !== null) {
+      map.panTo([lastCoords.lat, lastCoords.lng], { animate: false });
+    }
+  }
 }
 
 // Modal Map Initialization (Created lazily)
@@ -185,7 +199,7 @@ function updateCalculatedSpeed(newLat, newLng) {
     
     // Discard unrealistic GPS multi-path teleport jumps (>130 km/h)
     if (rawSpeed < 130) {
-      // Exponential moving average filter (30% new, 70% current)
+      // Exponential moving average filter (40% new, 60% current)
       currentSpeedKmh = (currentSpeedKmh * 0.6) + (rawSpeed * 0.4);
     }
     
@@ -305,7 +319,6 @@ function updateLastRecordedDisplay() {
   if (telemText) telemText.textContent = fullDisplay;
 }
 
-// Run clock ticker every 1000ms
 setInterval(updateLastRecordedDisplay, 1000);
 
 // =============================================================================
@@ -442,17 +455,14 @@ function updateAdminRecordingUI() {
 
   // Validation: Is device actively sharing location?
   if (!isSharingActive) {
-    // If device is NOT sharing: warn and lock recording
     warningBox.classList.remove('hidden');
     readyBox.classList.add('hidden');
     recordingBox.classList.add('hidden');
     
-    // If a recording was active when device stopped sharing, Admin can still finalize
     if (isRecordingTrip) {
       recordingBox.classList.remove('hidden');
     }
   } else {
-    // Device is actively sharing:
     warningBox.classList.add('hidden');
     if (isRecordingTrip) {
       readyBox.classList.add('hidden');
@@ -498,9 +508,9 @@ function updateActivePolyline() {
   const latLngs = tripSession.points.map(p => [p.lat, p.lng]);
   if (!activeRecordingPolyline) {
     activeRecordingPolyline = L.polyline(latLngs, {
-      color: '#10b981',
+      color: '#a8c7fa', // Material accent
       weight: 5,
-      opacity: 0.9,
+      opacity: 0.95,
       lineCap: 'round',
       lineJoin: 'round'
     }).addTo(map);
@@ -606,7 +616,7 @@ function setupAdminRecordingControls() {
       timerEl.textContent = "00:00:00";
       updateAdminRecordingUI();
 
-      // Automatically switch to Trips History view to see the new record
+      // Automatically switch to Trips History view
       switchView('viewTrips');
     }).catch(err => {
       console.error("Error saving trip:", err);
@@ -777,27 +787,27 @@ function openTripModal(tripKey, trip) {
 
     if (coords.length > 0) {
       modalPolyline = L.polyline(coords, {
-        color: '#10b981',
+        color: '#a8c7fa', // Material accent
         weight: 5,
         opacity: 0.95,
         lineCap: 'round',
         lineJoin: 'round'
       }).addTo(m);
 
-      // Start pin (green circle)
+      // Start pin (accent circle)
       modalStartMarker = L.circleMarker(coords[0], {
         radius: 7,
         color: '#ffffff',
-        fillColor: '#10b981',
+        fillColor: '#a8c7fa',
         fillOpacity: 1,
         weight: 3
       }).addTo(m).bindPopup('<b>Trip Origin</b>');
 
-      // End pin (red circle)
+      // End pin (sparkle coral circle)
       modalEndMarker = L.circleMarker(coords[coords.length - 1], {
         radius: 7,
         color: '#ffffff',
-        fillColor: '#ef4444',
+        fillColor: '#d96570',
         fillOpacity: 1,
         weight: 3
       }).addTo(m).bindPopup('<b>Trip Destination</b>');
@@ -821,7 +831,7 @@ function setupTripModalClose() {
 }
 
 // =============================================================================
-// NAVIGATION & VIEW SWITCHING
+// NAVIGATION & VIEW SWITCHING (DESKTOP & MOBILE ADAPTIVE)
 // =============================================================================
 function switchView(targetViewId) {
   document.querySelectorAll('.view-panel').forEach(panel => {
@@ -833,28 +843,32 @@ function switchView(targetViewId) {
     targetPanel.classList.add('active-view');
   }
 
-  // Update Bottom Nav active state
-  document.querySelectorAll('.nav-item').forEach(btn => {
+  // Update both desktop nav tabs and mobile bottom nav tabs
+  document.querySelectorAll('.desktop-nav-btn, .mobile-nav-item').forEach(btn => {
     btn.classList.toggle('active', btn.getAttribute('data-view') === targetViewId);
   });
 
   // Re-render Leaflet when switching to Ride Map
   if (targetViewId === 'viewRide' && map) {
-    setTimeout(() => {
-      map.invalidateSize();
-      if (lastCoords.lat !== null && lastCoords.lng !== null) {
-        map.panTo([lastCoords.lat, lastCoords.lng]);
-      }
-    }, 100);
+    setTimeout(ensureMapRender, 50);
+    setTimeout(ensureMapRender, 200);
   }
 }
 
 function setupNavigation() {
-  document.querySelectorAll('.nav-item').forEach(btn => {
+  document.querySelectorAll('.desktop-nav-btn, .mobile-nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
       const viewId = btn.getAttribute('data-view');
       switchView(viewId);
     });
+  });
+
+  // Handle window resizing and mobile orientation changes
+  window.addEventListener('resize', () => {
+    ensureMapRender();
+  });
+  window.addEventListener('orientationchange', () => {
+    setTimeout(ensureMapRender, 200);
   });
 }
 

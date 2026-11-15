@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>CHALOK Live GPS Tracker</title>
   
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   
-  <!-- Custom Modern Charcoal & Obsidian Stylesheet -->
+  <!-- Custom Modern Charcoal, Obsidian & Material Dark Stylesheet -->
   <link rel="stylesheet" href="style.css" />
 </head>
-<body class="uber-theme">
+<body class="gm-theme">
   <div class="app-layout">
     
-    <!-- Top Header Bar (Uber Style) -->
+    <!-- Top Header Bar (Desktop & Mobile Adaptive) -->
     <header class="app-header">
       <div class="header-left">
         <div class="app-logo">
@@ -31,23 +31,53 @@
           </div>
         </div>
 
-        <div id="connectionBadge" class="status-pill connecting" title="Firebase RTDB Live Connection">
+        <div id="connectionBadge" class="status-pill connecting" title="Firebase RTDB Connection">
           <span class="pulse-dot"></span>
           <span id="connectionText" class="pill-label">Connecting</span>
         </div>
       </div>
 
+      <!-- Desktop Nav Tabs (Only visible on Desktop/Tablet >= 768px) -->
+      <nav class="desktop-nav-tabs">
+        <button class="desktop-nav-btn active" data-view="viewRide">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+            <line x1="8" y1="2" x2="8" y2="18"></line>
+            <line x1="16" y1="6" x2="16" y2="22"></line>
+          </svg>
+          <span>Ride Map</span>
+        </button>
+
+        <button class="desktop-nav-btn" data-view="viewTrips">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <span>Journeys</span>
+        </button>
+
+        <button class="desktop-nav-btn" data-view="viewTelemetry">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
+          </svg>
+          <span>Telemetry & Sensors</span>
+        </button>
+      </nav>
+
       <!-- Mode Switcher (Rider vs Admin) -->
       <div class="mode-toggle-group">
         <button id="btnRiderMode" class="mode-tab active" data-mode="rider">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
             <circle cx="12" cy="7" r="4"></circle>
           </svg>
           <span>Rider</span>
         </button>
         <button id="btnAdminMode" class="mode-tab" data-mode="admin">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
@@ -56,11 +86,11 @@
       </div>
     </header>
 
-    <!-- Main Content Area with 3 Swappable Views -->
+    <!-- Main Content Viewport -->
     <main class="app-main-viewport">
       
       <!-- ==================================================== -->
-      <!-- VIEW 1: LIVE RIDE MAP (Uber-Style Tracking) -->
+      <!-- VIEW 1: LIVE RIDE MAP (Adaptive Desktop & Mobile) -->
       <!-- ==================================================== -->
       <section id="viewRide" class="view-panel active-view">
         <div class="map-wrapper">
@@ -84,20 +114,23 @@
 
           <!-- Floating Recenter Button -->
           <button id="btnRecenter" class="floating-recenter-btn" title="Center map on vehicle">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <circle cx="12" cy="12" r="3"></circle>
               <path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
             </svg>
-            <span>Target</span>
+            <span>Target Vehicle</span>
           </button>
         </div>
 
-        <!-- Uber-Style Floating Bottom Sheet Card -->
-        <div class="bottom-ride-sheet">
+        <!-- Desktop Sidebar / Mobile Bottom Sheet -->
+        <div class="ride-controls-panel">
           
           <!-- Admin Journey Recording Bar (Only visible in Admin Mode) -->
           <div id="adminRecordingBar" class="admin-trip-controls hidden">
-            
+            <div class="admin-bar-title">
+              <span>ADMIN TRIP CONTROLLER</span>
+            </div>
+
             <!-- Warning when device is NOT sharing -->
             <div id="adminSharingWarning" class="admin-notice-box warning hidden">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -112,9 +145,9 @@
             <div id="adminReadyBox" class="admin-ready-container">
               <div class="ready-info">
                 <span class="ready-dot"></span>
-                <span class="ready-text">Device validated & broadcasting live GPS coordinates</span>
+                <span class="ready-text">Device validated & broadcasting live GPS</span>
               </div>
-              <button id="btnStartRecording" class="btn-uber-primary">
+              <button id="btnStartRecording" class="btn-gm-primary">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="5 3 19 12 5 21 5 3"></polygon>
                 </svg>
@@ -127,7 +160,7 @@
               <div class="recording-badge-row">
                 <div class="recording-pulse-tag">
                   <span class="rec-dot"></span>
-                  <span>RECORDING JOURNEY</span>
+                  <span>RECORDING ACTIVE</span>
                 </div>
                 <div id="recordingTimer" class="trip-timer">00:00:00</div>
               </div>
@@ -142,30 +175,30 @@
                   <span id="liveTripPoints" class="stat-number">0 <small>pts</small></span>
                 </div>
                 <div class="live-stat-box">
-                  <span class="stat-caption">Current Speed</span>
+                  <span class="stat-caption">Speed</span>
                   <span id="liveTripSpeed" class="stat-number">0.0 <small>km/h</small></span>
                 </div>
               </div>
 
               <div class="recording-actions">
-                <button id="btnEndRecording" class="btn-uber-danger">
+                <button id="btnEndRecording" class="btn-gm-danger">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="6" y="6" width="12" height="12"></rect>
                   </svg>
                   <span>End & Save Journey</span>
                 </button>
-                <button id="btnCancelRecording" class="btn-uber-ghost">Discard</button>
+                <button id="btnCancelRecording" class="btn-gm-ghost">Discard</button>
               </div>
             </div>
           </div>
 
           <!-- Primary Live Metrics Grid -->
-          <div class="uber-metrics-grid">
+          <div class="gm-metrics-grid">
             <!-- Speed Card (Calculated from movement) -->
-            <div class="uber-metric-card primary-accent">
+            <div class="gm-metric-card accent-card">
               <div class="metric-top-label">
                 <span>VEHICLE SPEED</span>
-                <span class="pill-calc">CALC</span>
+                <span class="pill-calc">LIVE CALC</span>
               </div>
               <div class="metric-hero-val">
                 <span id="speedVal">0.0</span>
@@ -175,7 +208,7 @@
             </div>
 
             <!-- Satellites Card -->
-            <div class="uber-metric-card">
+            <div class="gm-metric-card">
               <div class="metric-top-label">SATELLITES</div>
               <div class="metric-hero-val">
                 <span id="satsVal">0</span>
@@ -185,7 +218,7 @@
             </div>
 
             <!-- Vehicle Tilt Degree Card -->
-            <div class="uber-metric-card">
+            <div class="gm-metric-card">
               <div class="metric-top-label">VEHICLE TILT</div>
               <div class="metric-hero-val">
                 <span id="tiltVal">0.0</span>
@@ -195,8 +228,8 @@
             </div>
 
             <!-- Live MPU Accel Card (X, Y, Z in g) -->
-            <div class="uber-metric-card full-span">
-              <div class="metric-top-label">LIVE 3-AXIS ACCELERATION (MPU6050)</div>
+            <div class="gm-metric-card full-span">
+              <div class="metric-top-label">3-AXIS ACCELERATION (MPU6050)</div>
               <div class="accel-chips-row">
                 <div class="accel-chip">
                   <span class="chip-axis">X</span>
@@ -225,10 +258,10 @@
           
           <div class="trips-page-header">
             <div class="header-titles">
-              <h2>Trip History</h2>
-              <p>Showing all recorded journeys & travelled distances</p>
+              <h2>Recorded Journeys</h2>
+              <p>Trip history with precise distance records & route bounds</p>
             </div>
-            <button id="btnClearAllHistory" class="btn-clear-history" title="Purge test records from database">
+            <button id="btnClearAllHistory" class="btn-clear-history" title="Purge history records from database">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"></polyline>
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -237,7 +270,7 @@
             </button>
           </div>
 
-          <!-- Trip List View -->
+          <!-- Trip List View (Desktop Multi-Column Grid) -->
           <div id="tripsList" class="trips-list">
             <div class="empty-trips-state">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -251,13 +284,13 @@
 
         </div>
 
-        <!-- Focused Trip Modal / Fullscreen Viewer (Bounding-box only) -->
+        <!-- Focused Trip Modal (Fraction rectangle bounding box only) -->
         <div id="tripModal" class="trip-modal hidden">
           <div class="modal-backdrop"></div>
           <div class="modal-card">
             <div class="modal-header">
               <div class="modal-title-col">
-                <span class="modal-sub">RECORDED JOURNEY PLOT</span>
+                <span class="modal-sub">RECORDED JOURNEY BOUNDS</span>
                 <h3 id="modalTripTitle">Trip Details</h3>
               </div>
               <button id="btnCloseModal" class="btn-close-modal" aria-label="Close">
@@ -394,9 +427,9 @@
 
     </main>
 
-    <!-- Bottom Navigation Bar (Uber Mobile Style) -->
-    <nav class="bottom-nav-bar">
-      <button class="nav-item active" data-view="viewRide">
+    <!-- Bottom Navigation Bar (ONLY visible on Mobile screen < 768px) -->
+    <nav class="mobile-bottom-nav">
+      <button class="mobile-nav-item active" data-view="viewRide">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
           <line x1="8" y1="2" x2="8" y2="18"></line>
@@ -405,18 +438,17 @@
         <span>Ride Map</span>
       </button>
 
-      <button class="nav-item" data-view="viewTrips">
+      <button class="mobile-nav-item" data-view="viewTrips">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
           <polyline points="14 2 14 8 20 8"></polyline>
           <line x1="16" y1="13" x2="8" y2="13"></line>
           <line x1="16" y1="17" x2="8" y2="17"></line>
-          <polyline points="10 9 9 9 8 9"></polyline>
         </svg>
         <span>Journeys</span>
       </button>
 
-      <button class="nav-item" data-view="viewTelemetry">
+      <button class="mobile-nav-item" data-view="viewTelemetry">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"></circle>
           <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
