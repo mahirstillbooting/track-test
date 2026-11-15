@@ -129,11 +129,13 @@ struct ButtonState {
   bool pressed;
   uint32_t changedAt;
   uint32_t presses;
+  uint32_t pressedAt;
+  bool holdHandled;
 };
 
 ButtonState buttons[] = {
-  {BUTTON_1, false, false, 0, 0},
-  {BUTTON_2, false, false, 0, 0}
+  {BUTTON_1, false, false, 0, 0, 0, false},
+  {BUTTON_2, false, false, 0, 0, 0, false}
 };
 
 // Sensor & Coordinate State
@@ -575,48 +577,75 @@ void readButtons(uint32_t now) {
     ButtonState &b = buttons[i];
     bool isDown = (digitalRead(b.pin) == LOW);
 
+    // Track raw electrical contact changes
     if (isDown != b.rawPressed) {
       b.rawPressed = isDown;
       b.changedAt = now;
     }
 
-    if (isDown == b.pressed || (now - b.changedAt < 35)) continue;
-    b.pressed = isDown;
-
-    if (b.pressed) {
-      ++b.presses;
-
-      if (i == 0) {
-        // BUTTON 1 (GPIO 23): GO LIVE / MAKE AVAILABLE
-        if (currentState == STATE_STANDBY) {
-          startLiveSharingProcedurally();
-        }
-      } else {
-        // Track rapid clicks on Button 2 for 4-pulse LCD backlight toggle
-        static uint32_t btn2PulseWindow = 0;
-        static uint8_t btn2PulseCount = 0;
-
-        if (now - btn2PulseWindow < 1400) {
-          btn2PulseCount++;
-        } else {
-          btn2PulseCount = 1;
-        }
-        btn2PulseWindow = now;
-
-        if (btn2PulseCount >= 4) {
-          btn2PulseCount = 0;
+    // Debounce window (35ms)
+    if (now - b.changedAt < 35) {
+      // While debouncing, if Button 1 is held down, continue checking hold timer
+      if (b.pressed && i == 0 && !b.holdHandled) {
+        if (now - b.pressedAt >= 2000) {
+          b.holdHandled = true;
           lcdBacklightOn = !lcdBacklightOn;
           if (lcdFound) {
             if (lcdBacklightOn) lcd.backlight();
             else lcd.noBacklight();
           }
-          triggerBuzzerChirp(1, 30);
-          Serial.printf("[LCD] 4-pulse toggle -> Backlight %s\n", lcdBacklightOn ? "ON" : "OFF");
-        } else {
-          // BUTTON 2 (GPIO 32): STOP / STANDBY
+          triggerBuzzerChirp(1, 40); // 1 clean confirmation chirp
+          Serial.printf("[LCD] 2s Hold on Button 1 -> Backlight %s\n", lcdBacklightOn ? "ON" : "OFF");
+        }
+      }
+      continue;
+    }
+
+    // State transition
+    if (isDown != b.pressed) {
+      b.pressed = isDown;
+
+      if (b.pressed) {
+        // --- BUTTON PRESSED DOWN ---
+        b.pressedAt = now;
+        b.holdHandled = false;
+        ++b.presses;
+
+        if (i == 1) {
+          // BUTTON 2 (GPIO 32): Single Click -> STOP / STANDBY immediately
           if (currentState != STATE_STANDBY) {
             stopLiveSharingAndSleepRadio();
           }
+        }
+      } else {
+        // --- BUTTON RELEASED ---
+        uint32_t pressDuration = now - b.pressedAt;
+
+        if (i == 0) {
+          // BUTTON 1 (GPIO 23): Single Click -> START / GO LIVE
+          // Only fires if NOT a 2s hold (i.e. short click < 2000ms).
+          // If the user held for 2s to toggle LCD, holdHandled is true so it NEVER starts sharing!
+          if (!b.holdHandled && pressDuration >= 40) {
+            if (currentState == STATE_STANDBY) {
+              startLiveSharingProcedurally();
+            }
+          }
+        }
+
+        b.holdHandled = false;
+      }
+    } else {
+      // Button is still continuously held down: check 2s hold condition
+      if (b.pressed && i == 0 && !b.holdHandled) {
+        if (now - b.pressedAt >= 2000) {
+          b.holdHandled = true;
+          lcdBacklightOn = !lcdBacklightOn;
+          if (lcdFound) {
+            if (lcdBacklightOn) lcd.backlight();
+            else lcd.noBacklight();
+          }
+          triggerBuzzerChirp(1, 40); // 1 clean confirmation chirp
+          Serial.printf("[LCD] 2s Hold on Button 1 -> Backlight %s\n", lcdBacklightOn ? "ON" : "OFF");
         }
       }
     }
