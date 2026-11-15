@@ -1,6 +1,8 @@
-// ESP32 Live Tracker Client Application
+// =============================================================================
+// CHALOK LIVE GPS TRACKER - UBER OBSIDIAN ENGINE
+// =============================================================================
 
-// 1. Firebase Configuration
+// 1. Firebase RTDB Configuration
 const firebaseConfig = window.firebaseConfig || {
   apiKey: "AIzaSyBc8wZeR65Mxwax0WV-7VmxLKz_tFDUsGE",
   authDomain: "track-test-4ddde.firebaseapp.com",
@@ -12,31 +14,65 @@ const firebaseConfig = window.firebaseConfig || {
   measurementId: "G-WPSZZ4H6H1"
 };
 
-// Initialize Firebase Realtime Database
+// Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// 2. State Management
+// =============================================================================
+// GLOBAL STATE
+// =============================================================================
 let map = null;
+let modalMap = null;
 let trackerMarker = null;
-let journeyPolyline = null;
-let hasReceivedFirstFix = false;
-let lastCoords = { lat: null, lng: null };
-let animationFrameId = null;
-let currentMode = 'passenger';
+let activeRecordingPolyline = null;
+let modalPolyline = null;
+let modalStartMarker = null;
+let modalEndMarker = null;
 
-// 3. Initialize Leaflet Map
-function initMap() {
-  // Default coordinates (Dhaka fallback)
-  const defaultLat = 23.8103;
-  const defaultLng = 90.4125;
+let currentMode = 'rider'; // 'rider' | 'admin'
+let isSharingActive = false;
+let hasReceivedFirstFix = false;
+
+// Movement & Speed State
+let lastCoords = { lat: null, lng: null };
+let lastSpeedCalcCoords = { lat: null, lng: null, time: null };
+let currentSpeedKmh = 0.0;
+let animationFrameId = null;
+
+// Telemetry & Device Packet Clock
+let lastPacketWallTime = null;
+let lastPacketDeviceTs = null;
+let lastPacketDataString = '';
+
+// Admin Journey Recording State
+let isRecordingTrip = false;
+let tripSession = {
+  startTime: null,
+  timerInterval: null,
+  points: [],
+  totalDistMeters: 0,
+  lastRecordedCoord: null
+};
+
+// Trips History Cache
+let tripsHistoryCache = {};
+
+// =============================================================================
+// LEAFLET MAP INITIALIZATION (High-Detail Texture Layers Retained)
+// =============================================================================
+function initMainMap() {
+  const defaultLat = 23.7186;
+  const defaultLng = 90.3837;
 
   map = L.map('map', {
-    zoomControl: true,
+    zoomControl: false,
     attributionControl: true
-  }).setView([defaultLat, defaultLng], 15);
+  }).setView([defaultLat, defaultLng], 16);
 
-  // High-Detail Base Layers (Render all alleys, road numbers, and street names)
+  // Position zoom controls nicely for mobile
+  L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+  // High-Detail Base Layers (Retaining Google Detailed Streets, OSM HOT, Hybrid)
   const detailedStreets = L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20,
     subdomains: '0123',
@@ -45,19 +81,17 @@ function initMap() {
 
   const osmHumanitarian = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    attribution: '&copy; OpenStreetMap'
   });
 
   const satelliteHybrid = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
     maxZoom: 20,
     subdomains: '0123',
-    attribution: '&copy; Google Maps Satellite'
+    attribution: '&copy; Google Satellite'
   });
 
-  // Set Detailed Streets as default
   detailedStreets.addTo(map);
 
-  // Layer control to easily toggle between Detailed Streets, OSM, and Satellite
   const baseMaps = {
     "Detailed Streets": detailedStreets,
     "OSM Humanitarian": osmHumanitarian,
@@ -65,30 +99,123 @@ function initMap() {
   };
   L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
 
-  // Custom DivIcon for Tracker Marker
+  // Custom Emerald DivIcon for Vehicle Marker
   const trackerIcon = L.divIcon({
     className: 'custom-tracker-marker',
     html: `
       <div class="marker-pulse"></div>
       <div class="marker-core">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <circle cx="12" cy="12" r="7"></circle>
-          <path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polygon points="12 2 19 21 12 17 5 21 12 2"></polygon>
         </svg>
       </div>
     `,
-    iconSize: [36, 36],
-    iconAnchor: [18, 18]
+    iconSize: [38, 38],
+    iconAnchor: [19, 19]
   });
 
-  // Create Marker
   trackerMarker = L.marker([defaultLat, defaultLng], { icon: trackerIcon }).addTo(map);
-  trackerMarker.bindPopup('<b>ESP32 Tracker</b><br>Initial position');
+  trackerMarker.bindPopup('<b>CHALOK Vehicle</b><br>Standby position');
+
+  // Recenter button listener
+  document.getElementById('btnRecenter').addEventListener('click', () => {
+    if (lastCoords.lat !== null && lastCoords.lng !== null) {
+      map.flyTo([lastCoords.lat, lastCoords.lng], 17, { duration: 0.8 });
+    }
+  });
 }
 
-// 4. Smooth Marker Movement
-function updateMarkerPosition(newLat, newLng) {
-  // First time position received
+// Modal Map Initialization (Created lazily)
+function getModalMap() {
+  if (!modalMap) {
+    modalMap = L.map('modalMap', {
+      zoomControl: true,
+      attributionControl: false
+    }).setView([23.7186, 90.3837], 15);
+
+    L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+      maxZoom: 20,
+      subdomains: '0123'
+    }).addTo(modalMap);
+  }
+  return modalMap;
+}
+
+// =============================================================================
+// HAVERSINE DISTANCE & SPEED CALCULATION
+// =============================================================================
+function calcDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000; // Earth radius in meters
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Compute speed smoothly from coordinate movement
+function updateCalculatedSpeed(newLat, newLng) {
+  const now = performance.now();
+
+  if (lastSpeedCalcCoords.lat === null || lastSpeedCalcCoords.time === null) {
+    lastSpeedCalcCoords = { lat: newLat, lng: newLng, time: now };
+    currentSpeedKmh = 0.0;
+    renderSpeedUI(0.0);
+    return;
+  }
+
+  const distMeters = calcDistanceMeters(
+    lastSpeedCalcCoords.lat,
+    lastSpeedCalcCoords.lng,
+    newLat,
+    newLng
+  );
+  const dtSec = (now - lastSpeedCalcCoords.time) / 1000;
+
+  // Stationarity filter: movement under 2.5 meters in 3 seconds is drift / jitter
+  if (distMeters < 2.5) {
+    currentSpeedKmh = 0.0;
+    renderSpeedUI(0.0);
+    return;
+  }
+
+  if (dtSec >= 1.0) {
+    const rawSpeed = (distMeters / dtSec) * 3.6; // m/s to km/h
+    
+    // Discard unrealistic GPS multi-path teleport jumps (>130 km/h)
+    if (rawSpeed < 130) {
+      // Exponential moving average filter (30% new, 70% current)
+      currentSpeedKmh = (currentSpeedKmh * 0.6) + (rawSpeed * 0.4);
+    }
+    
+    lastSpeedCalcCoords = { lat: newLat, lng: newLng, time: now };
+    renderSpeedUI(currentSpeedKmh);
+  }
+}
+
+function renderSpeedUI(speed) {
+  const formatted = speed > 0.4 ? speed.toFixed(1) : '0.0';
+  document.getElementById('speedVal').textContent = formatted;
+  document.getElementById('telemSpeed').textContent = `${formatted} km/h`;
+
+  const speedStatusEl = document.getElementById('speedStatus');
+  if (speedStatusEl) {
+    if (speed < 0.8) speedStatusEl.textContent = 'Stationary';
+    else if (speed < 20) speedStatusEl.textContent = 'Cruising slow';
+    else speedStatusEl.textContent = 'Moving in transit';
+  }
+
+  const liveTripSpeedEl = document.getElementById('liveTripSpeed');
+  if (liveTripSpeedEl) {
+    liveTripSpeedEl.innerHTML = `${formatted} <small>km/h</small>`;
+  }
+}
+
+// =============================================================================
+// SMOOTH MARKER ANIMATION
+// =============================================================================
+function animateMarker(newLat, newLng) {
   if (lastCoords.lat === null || lastCoords.lng === null) {
     lastCoords = { lat: newLat, lng: newLng };
     trackerMarker.setLatLng([newLat, newLng]);
@@ -99,41 +226,24 @@ function updateMarkerPosition(newLat, newLng) {
     return;
   }
 
-  // Calculate distance moved in meters using Haversine formula
-  const R = 6371000; // Earth radius in meters
-  const dLat = (newLat - lastCoords.lat) * Math.PI / 180;
-  const dLng = (newLng - lastCoords.lng) * Math.PI / 180;
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(lastCoords.lat * Math.PI / 180) * Math.cos(newLat * Math.PI / 180) *
-            Math.sin(dLng/2) * Math.sin(dLng/2);
-  const distMeters = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const dist = calcDistanceMeters(lastCoords.lat, lastCoords.lng, newLat, newLng);
+  if (dist < 2.0) return; // Keep marker rock solid if under 2m drift
 
-  // If change is under 3 meters (GPS stationary drift/noise), keep marker completely still
-  if (distMeters < 3.0) {
-    return;
-  }
-
-  // Smooth position interpolation over 800ms
   const startLat = lastCoords.lat;
   const startLng = lastCoords.lng;
   const startTime = performance.now();
-  const duration = 800; // milliseconds
+  const duration = 800; // ms
 
-  if (animationFrameId) {
-    cancelAnimationFrame(animationFrameId);
-  }
+  if (animationFrameId) cancelAnimationFrame(animationFrameId);
 
-  function step(currentTime) {
-    const elapsed = currentTime - startTime;
-    const progress = Math.min(elapsed / duration, 1);
-    
-    // Ease-out quad curve for natural decelerating motion
-    const ease = 1 - (1 - progress) * (1 - progress);
+  function step(time) {
+    const progress = Math.min((time - startTime) / duration, 1);
+    const ease = 1 - Math.pow(1 - progress, 2); // Quad ease-out
 
-    const interpolatedLat = startLat + (newLat - startLat) * ease;
-    const interpolatedLng = startLng + (newLng - startLng) * ease;
+    const curLat = startLat + (newLat - startLat) * ease;
+    const curLng = startLng + (newLng - startLng) * ease;
 
-    trackerMarker.setLatLng([interpolatedLat, interpolatedLng]);
+    trackerMarker.setLatLng([curLat, curLng]);
 
     if (progress < 1) {
       animationFrameId = requestAnimationFrame(step);
@@ -144,312 +254,641 @@ function updateMarkerPosition(newLat, newLng) {
 
   animationFrameId = requestAnimationFrame(step);
 
-  // Automatically center map on first valid position fix
   if (!hasReceivedFirstFix) {
     map.setView([newLat, newLng], 16);
     hasReceivedFirstFix = true;
   }
 }
 
-// 5. Firebase Realtime Listeners
+// =============================================================================
+// DEVICE RECORDED TIMESTAMP & AGE TICKER (1-Second Engine)
+// =============================================================================
+function updateLastRecordedDisplay() {
+  const pillText = document.getElementById('lastRecordedText');
+  const telemText = document.getElementById('telemLastRec');
+
+  if (!lastPacketWallTime) {
+    if (pillText) pillText.textContent = 'Waiting for GPS...';
+    if (telemText) telemText.textContent = 'No packets received';
+    return;
+  }
+
+  const elapsedSec = Math.floor((Date.now() - lastPacketWallTime) / 1000);
+  let relativeAgeStr = '';
+
+  if (elapsedSec < 4) {
+    relativeAgeStr = 'Just now';
+  } else if (elapsedSec < 60) {
+    relativeAgeStr = `${elapsedSec}s ago`;
+  } else if (elapsedSec < 3600) {
+    const m = Math.floor(elapsedSec / 60);
+    relativeAgeStr = `${m}m ago ${!isSharingActive ? '(Standby)' : ''}`;
+  } else {
+    const h = Math.floor(elapsedSec / 3600);
+    relativeAgeStr = `>${h}h ago (Offline)`;
+  }
+
+  // Determine actual recorded clock time
+  let clockTimeStr = '';
+  if (lastPacketDeviceTs && lastPacketDeviceTs > 1577836800000) {
+    // GPS Real-world UTC epoch
+    const d = new Date(lastPacketDeviceTs);
+    clockTimeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } else {
+    // Wall time receipt of device packet
+    const d = new Date(lastPacketWallTime);
+    clockTimeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  const fullDisplay = `Rec: ${clockTimeStr} (${relativeAgeStr})`;
+  if (pillText) pillText.textContent = fullDisplay;
+  if (telemText) telemText.textContent = fullDisplay;
+}
+
+// Run clock ticker every 1000ms
+setInterval(updateLastRecordedDisplay, 1000);
+
+// =============================================================================
+// FIREBASE REALTIME LISTENERS
+// =============================================================================
 function setupFirebaseListeners() {
-  // A. Connection Status Listener (.info/connected)
+  // A. Connection Status
   db.ref('.info/connected').on('value', (snap) => {
-    const badge = document.getElementById('connectionStatus');
-    const label = badge.querySelector('.status-label');
-
+    const badge = document.getElementById('connectionBadge');
+    const label = document.getElementById('connectionText');
     if (snap.val() === true) {
-      badge.className = 'connection-badge connected';
-      label.textContent = 'Connected';
+      badge.className = 'status-pill connected';
+      label.textContent = 'Live Connected';
     } else {
-      badge.className = 'connection-badge disconnected';
-      label.textContent = 'Disconnected';
+      badge.className = 'status-pill disconnected';
+      label.textContent = 'Offline';
     }
   });
 
-  let previousActiveState = null;
-
-  // B. Tracker Sharing Status Listener (tracker/active)
+  // B. Tracker Sharing Status (tracker/active)
   db.ref('tracker/active').on('value', (snap) => {
-    const isActive = snap.val() === true;
-    const indicator = document.getElementById('sharingStatus');
-    const statusText = document.getElementById('sharingStatusText');
-
-    // Auto-reload webpage when ESP32 starts a new active tracking session
-    if (previousActiveState === false && isActive === true) {
-      console.log("Tracker activated! Auto-reloading page...");
-      window.location.reload();
-      return;
-    }
-    previousActiveState = isActive;
-
-    if (isActive) {
-      indicator.className = 'status-indicator active';
-      statusText.textContent = 'ACTIVE';
+    isSharingActive = (snap.val() === true);
+    
+    // Update Floating Ride Pill
+    const sharingPill = document.getElementById('rideSharingBadge');
+    const sharingLabel = document.getElementById('rideSharingLabel');
+    if (isSharingActive) {
+      sharingPill.className = 'sharing-pill active';
+      sharingLabel.textContent = 'SHARING ACTIVE';
     } else {
-      indicator.className = 'status-indicator stopped';
-      statusText.textContent = 'STOPPED';
+      sharingPill.className = 'sharing-pill stopped';
+      sharingLabel.textContent = 'STANDBY';
     }
+
+    // Refresh Admin Journey Recording State
+    updateAdminRecordingUI();
   });
 
-  // C. Current Location Listener (tracker/current)
+  // C. Live Telemetry & GPS Coordinates (tracker/current)
   db.ref('tracker/current').on('value', (snap) => {
     const data = snap.val();
     if (!data) return;
 
+    const dataString = JSON.stringify(data);
+    if (dataString !== lastPacketDataString) {
+      lastPacketDataString = dataString;
+      lastPacketWallTime = Date.now();
+      lastPacketDeviceTs = data.timestamp || null;
+      updateLastRecordedDisplay();
+    }
+
     const lat = parseFloat(data.lat);
     const lng = parseFloat(data.lng);
-    const speed = data.speedKmh !== undefined ? data.speedKmh : (data.speed || 0);
     const sats = data.satellites || 0;
-    const hdop = data.hdop !== undefined ? data.hdop : 0;
-    const ts = data.timestamp || 0;
 
-    // Update UI Metric Cards
-    document.getElementById('speedVal').textContent = Number(speed).toFixed(1);
+    // Acceleration X, Y, Z (in g)
+    const ax = data.ax !== undefined ? parseFloat(data.ax) : 0.0;
+    const ay = data.ay !== undefined ? parseFloat(data.ay) : 0.0;
+    const az = data.az !== undefined ? parseFloat(data.az) : 0.0;
+
+    // Angles: Tilt, Roll, Pitch
+    const tilt = data.tilt !== undefined ? parseFloat(data.tilt) : 0.0;
+    const roll = data.roll !== undefined ? parseFloat(data.roll) : 0.0;
+    const pitch = data.pitch !== undefined ? parseFloat(data.pitch) : 0.0;
+
+    // Update Telemetry & UI Cards
     document.getElementById('satsVal').textContent = sats;
-    document.getElementById('hdopVal').textContent = Number(hdop).toFixed(1);
+    document.getElementById('gpsFixStatus').textContent = sats >= 4 ? '3D GPS Fix' : 'Searching';
+    document.getElementById('tiltVal').textContent = tilt.toFixed(1);
+    document.getElementById('tiltSubtext').textContent = `Roll: ${roll.toFixed(1)}° | Pitch: ${pitch.toFixed(1)}°`;
 
-    // Update Vehicle Tilt & Attitudes (from MPU6050)
-    const tilt = data.tilt !== undefined ? data.tilt : (data.totalTilt !== undefined ? data.totalTilt : 0);
-    const roll = data.roll !== undefined ? data.roll : (data.rollX !== undefined ? data.rollX : 0);
-    const pitch = data.pitch !== undefined ? data.pitch : (data.pitchY !== undefined ? data.pitchY : 0);
-    const tiltEl = document.getElementById('tiltVal');
-    if (tiltEl) tiltEl.textContent = Number(tilt).toFixed(1);
-    const tiltDetailEl = document.getElementById('tiltDetail');
-    if (tiltDetailEl) tiltDetailEl.textContent = `Roll: ${Number(roll).toFixed(1)}° | Pitch: ${Number(pitch).toFixed(1)}°`;
+    // MPU chips on Ride Card
+    document.getElementById('accelX').textContent = (ax >= 0 ? '+' : '') + ax.toFixed(2) + ' g';
+    document.getElementById('accelY').textContent = (ay >= 0 ? '+' : '') + ay.toFixed(2) + ' g';
+    document.getElementById('accelZ').textContent = (az >= 0 ? '+' : '') + az.toFixed(2) + ' g';
 
-    // Format last update timestamp safely (Fixes 1970 date bug for ESP32 millis() & test data)
-    let timeString = '';
-    const now = new Date();
-    const isEpochMs = ts > 1577836800000;  // > Jan 1, 2020 in ms
-    const isEpochSec = ts > 1577836800 && ts < 1577836800000; // > Jan 1, 2020 in sec
+    // Telemetry View Page Elements
+    document.getElementById('telemTilt').textContent = `${tilt.toFixed(1)}°`;
+    document.getElementById('telemRoll').textContent = `${roll.toFixed(1)}°`;
+    document.getElementById('telemPitch').textContent = `${pitch.toFixed(1)}°`;
+    document.getElementById('telemSats').textContent = `${sats} satellites`;
+    document.getElementById('telemAxVal').textContent = `${(ax >= 0 ? '+' : '') + ax.toFixed(2)} g`;
+    document.getElementById('telemAyVal').textContent = `${(ay >= 0 ? '+' : '') + ay.toFixed(2)} g`;
+    document.getElementById('telemAzVal').textContent = `${(az >= 0 ? '+' : '') + az.toFixed(2)} g`;
 
-    if (isEpochMs || isEpochSec) {
-      const d = new Date(isEpochMs ? ts : ts * 1000);
-      timeString = d.toLocaleTimeString() + ' (' + d.toLocaleDateString() + ')';
-    } else {
-      // For ESP32 millis() or test data, display local receipt time
-      timeString = now.toLocaleTimeString() + ' (Just now)';
-    }
-    document.getElementById('lastUpdateVal').textContent = timeString;
+    // Fill bars for G-force (normalized between -2g and +2g => 0% to 100%)
+    const pctX = Math.min(Math.max(((ax + 2) / 4) * 100, 5), 95);
+    const pctY = Math.min(Math.max(((ay + 2) / 4) * 100, 5), 95);
+    const pctZ = Math.min(Math.max(((az + 2) / 4) * 100, 5), 95);
+    document.getElementById('barAx').style.width = `${pctX}%`;
+    document.getElementById('barAy').style.width = `${pctY}%`;
+    document.getElementById('barAz').style.width = `${pctZ}%`;
 
-    // Smoothly animate marker position on map
+    // Coordinates
     if (!isNaN(lat) && !isNaN(lng)) {
-      updateMarkerPosition(lat, lng);
+      document.getElementById('telemLat').textContent = lat.toFixed(6);
+      document.getElementById('telemLng').textContent = lng.toFixed(6);
+
+      // Animate Marker Smoothly
+      animateMarker(lat, lng);
+
+      // Calculate speed dynamically from coordinates movement
+      updateCalculatedSpeed(lat, lng);
+
+      // If Admin has started recording journey, append point
+      if (isRecordingTrip) {
+        handleTripPointRecording(lat, lng);
+      }
     }
+  });
+
+  // D. Trips History Listener (history/)
+  db.ref('history').on('value', (snap) => {
+    tripsHistoryCache = snap.val() || {};
+    renderTripsList(tripsHistoryCache);
   });
 }
 
-// 6. Mode Switcher Setup (Passenger / Admin)
-function setupModeSwitcher() {
-  const btnPassenger = document.getElementById('btnPassenger');
-  const btnAdmin = document.getElementById('btnAdmin');
-  const adminPanel = document.getElementById('adminPanel');
+// =============================================================================
+// ADMIN JOURNEY RECORDING WORKFLOW
+// =============================================================================
+function updateAdminRecordingUI() {
+  const adminRecordingBar = document.getElementById('adminRecordingBar');
+  const warningBox = document.getElementById('adminSharingWarning');
+  const readyBox = document.getElementById('adminReadyBox');
+  const recordingBox = document.getElementById('adminRecordingBox');
 
-  btnPassenger.addEventListener('click', () => {
-    currentMode = 'passenger';
-    btnPassenger.classList.add('active');
-    btnAdmin.classList.remove('active');
-    adminPanel.classList.add('hidden');
-    if (map) map.invalidateSize();
-  });
+  // Only visible when currentMode === 'admin'
+  if (currentMode !== 'admin') {
+    adminRecordingBar.classList.add('hidden');
+    return;
+  }
+  adminRecordingBar.classList.remove('hidden');
 
-  btnAdmin.addEventListener('click', () => {
-    currentMode = 'admin';
-    btnAdmin.classList.add('active');
-    btnPassenger.classList.remove('active');
-    adminPanel.classList.remove('hidden');
-    if (map) map.invalidateSize();
-  });
+  // Validation: Is device actively sharing location?
+  if (!isSharingActive) {
+    // If device is NOT sharing: warn and lock recording
+    warningBox.classList.remove('hidden');
+    readyBox.classList.add('hidden');
+    recordingBox.classList.add('hidden');
+    
+    // If a recording was active when device stopped sharing, Admin can still finalize
+    if (isRecordingTrip) {
+      recordingBox.classList.remove('hidden');
+    }
+  } else {
+    // Device is actively sharing:
+    warningBox.classList.add('hidden');
+    if (isRecordingTrip) {
+      readyBox.classList.add('hidden');
+      recordingBox.classList.remove('hidden');
+    } else {
+      readyBox.classList.remove('hidden');
+      recordingBox.classList.add('hidden');
+    }
+  }
 }
 
-// 7. Journey Controls (Admin Mode)
-function setupJourneyControls() {
-  const btnShowJourney = document.getElementById('btnShowJourney');
-  const btnArchiveJourney = document.getElementById('btnArchiveJourney');
-  const btnClearJourney = document.getElementById('btnClearJourney');
-  const historySelect = document.getElementById('historySelect');
-  const journeyStatus = document.getElementById('journeyStatus');
-
-  let historyCache = {}; // Cache of loaded history entries
-
-  // Helper to render polyline from point array
-  function drawJourneyPolyline(coords, label) {
-    if (journeyPolyline) {
-      map.removeLayer(journeyPolyline);
-    }
-
-    journeyPolyline = L.polyline(coords, {
-      color: '#3b82f6',
-      weight: 4,
-      opacity: 0.85,
-      lineJoin: 'round',
-      lineCap: 'round'
-    }).addTo(map);
-
-    map.fitBounds(journeyPolyline.getBounds(), { padding: [40, 40] });
-    journeyStatus.textContent = label;
+function handleTripPointRecording(lat, lng) {
+  if (!tripSession.lastRecordedCoord) {
+    tripSession.lastRecordedCoord = { lat, lng };
+    tripSession.points.push({ lat, lng, timestamp: Date.now(), speed: currentSpeedKmh });
+    updateActivePolyline();
+    return;
   }
 
-  // A. Show Current Active Journey
-  btnShowJourney.addEventListener('click', () => {
-    journeyStatus.textContent = 'Fetching current journey...';
+  const distMeters = calcDistanceMeters(
+    tripSession.lastRecordedCoord.lat,
+    tripSession.lastRecordedCoord.lng,
+    lat,
+    lng
+  );
 
-    db.ref('tracker/journey').once('value').then((snap) => {
-      let val = snap.val();
-      if (!val) {
-        return db.ref('journey').once('value').then(rootSnap => rootSnap.val());
-      }
-      return val;
-    }).then((val) => {
-      if (!val) {
-        journeyStatus.textContent = 'No current journey data in DB.';
-        return;
-      }
+  // Record point if moved >= 2.0 meters
+  if (distMeters >= 2.0) {
+    tripSession.totalDistMeters += distMeters;
+    tripSession.lastRecordedCoord = { lat, lng };
+    tripSession.points.push({ lat, lng, timestamp: Date.now(), speed: currentSpeedKmh });
 
-      const rawPoints = [];
-      if (Array.isArray(val)) {
-        val.forEach(item => { if (item) rawPoints.push(item); });
-      } else if (typeof val === 'object') {
-        Object.keys(val).forEach(key => { if (val[key]) rawPoints.push(val[key]); });
-      }
+    // Update Live Stats
+    const distKm = (tripSession.totalDistMeters / 1000).toFixed(2);
+    document.getElementById('liveTripDist').innerHTML = `${distKm} <small>km</small>`;
+    document.getElementById('liveTripPoints').innerHTML = `${tripSession.points.length} <small>pts</small>`;
 
-      rawPoints.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-      const coords = rawPoints
-        .filter(p => !isNaN(parseFloat(p.lat)) && !isNaN(parseFloat(p.lng)))
-        .map(p => [parseFloat(p.lat), parseFloat(p.lng)]);
+    updateActivePolyline();
+  }
+}
 
-      if (coords.length === 0) {
-        journeyStatus.textContent = 'No valid coordinates in current journey.';
-        return;
-      }
+function updateActivePolyline() {
+  const latLngs = tripSession.points.map(p => [p.lat, p.lng]);
+  if (!activeRecordingPolyline) {
+    activeRecordingPolyline = L.polyline(latLngs, {
+      color: '#10b981',
+      weight: 5,
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round'
+    }).addTo(map);
+  } else {
+    activeRecordingPolyline.setLatLngs(latLngs);
+  }
+}
 
-      drawJourneyPolyline(coords, `Displaying ${coords.length} active journey point(s)`);
-    }).catch((err) => {
-      console.error('Error fetching current journey:', err);
-      journeyStatus.textContent = 'Error loading current journey.';
-    });
-  });
+function setupAdminRecordingControls() {
+  const btnStart = document.getElementById('btnStartRecording');
+  const btnEnd = document.getElementById('btnEndRecording');
+  const btnCancel = document.getElementById('btnCancelRecording');
+  const timerEl = document.getElementById('recordingTimer');
 
-  // B. Save Current Journey & Start New Trip
-  btnArchiveJourney.addEventListener('click', () => {
-    journeyStatus.textContent = 'Archiving current journey...';
+  // Start Trip Recording
+  btnStart.addEventListener('click', () => {
+    if (!isSharingActive) {
+      alert("Cannot record journey: The device is currently STOPPED. Start sharing on the device first.");
+      return;
+    }
 
-    let foundPath = 'tracker/journey';
-    db.ref('tracker/journey').once('value').then((snap) => {
-      let val = snap.val();
-      if (!val) {
-        foundPath = 'journey';
-        return db.ref('journey').once('value').then(rootSnap => rootSnap.val());
-      }
-      return val;
-    }).then((val) => {
-      if (!val) {
-        journeyStatus.textContent = 'No active journey points to save.';
-        return;
-      }
+    isRecordingTrip = true;
+    tripSession.startTime = Date.now();
+    tripSession.points = [];
+    tripSession.totalDistMeters = 0;
+    tripSession.lastRecordedCoord = null;
 
-      // Format date for history label
-      const now = new Date();
-      const dateStr = now.toLocaleDateString() + ' ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (activeRecordingPolyline) {
+      map.removeLayer(activeRecordingPolyline);
+      activeRecordingPolyline = null;
+    }
 
-      // Save to history in Firebase
-      const historyEntry = {
-        title: `Trip on ${dateStr}`,
-        savedAt: firebase.database.ServerValue.TIMESTAMP,
-        formattedDate: dateStr,
-        points: val
-      };
-
-      return db.ref('history').push(historyEntry).then(() => {
-        // Clear active journey from DB
-        const p1 = db.ref('tracker/journey').remove();
-        const p2 = db.ref('journey').remove();
-        return Promise.all([p1, p2]);
+    // Add current location if available
+    if (lastCoords.lat !== null && lastCoords.lng !== null) {
+      tripSession.lastRecordedCoord = { lat: lastCoords.lat, lng: lastCoords.lng };
+      tripSession.points.push({
+        lat: lastCoords.lat,
+        lng: lastCoords.lng,
+        timestamp: Date.now(),
+        speed: currentSpeedKmh
       });
-    }).then(() => {
-      if (journeyPolyline) {
-        map.removeLayer(journeyPolyline);
-        journeyPolyline = null;
+      updateActivePolyline();
+    }
+
+    // Start Running Timer
+    clearInterval(tripSession.timerInterval);
+    tripSession.timerInterval = setInterval(() => {
+      const elapsedSec = Math.floor((Date.now() - tripSession.startTime) / 1000);
+      const hrs = String(Math.floor(elapsedSec / 3600)).padStart(2, '0');
+      const mins = String(Math.floor((elapsedSec % 3600) / 60)).padStart(2, '0');
+      const secs = String(elapsedSec % 60).padStart(2, '0');
+      timerEl.textContent = `${hrs}:${mins}:${secs}`;
+    }, 1000);
+
+    updateAdminRecordingUI();
+  });
+
+  // End & Save Journey
+  btnEnd.addEventListener('click', () => {
+    if (tripSession.points.length < 2) {
+      const confirmSave = confirm("The trip has very few recorded points. Do you still want to save it?");
+      if (!confirmSave) return;
+    }
+
+    clearInterval(tripSession.timerInterval);
+    const durationSeconds = Math.floor((Date.now() - tripSession.startTime) / 1000);
+    const distanceKm = parseFloat((tripSession.totalDistMeters / 1000).toFixed(2));
+    const now = new Date();
+
+    const dateFormatted = now.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+    const timeFormatted = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const tripRecord = {
+      title: `Trip on ${dateFormatted} at ${timeFormatted}`,
+      savedAt: firebase.database.ServerValue.TIMESTAMP,
+      formattedDate: `${dateFormatted}, ${timeFormatted}`,
+      distanceKm: distanceKm,
+      durationSeconds: durationSeconds,
+      durationFormatted: formatDuration(durationSeconds),
+      pointsCount: tripSession.points.length,
+      startCoords: tripSession.points[0] || { lat: 0, lng: 0 },
+      endCoords: tripSession.points[tripSession.points.length - 1] || { lat: 0, lng: 0 },
+      points: tripSession.points
+    };
+
+    // Save to Firebase RTDB under /history
+    db.ref('history').push(tripRecord).then(() => {
+      alert(`Journey successfully saved!\nTotal Distance: ${distanceKm} km\nDuration: ${formatDuration(durationSeconds)}`);
+      
+      // Clean up local recording state
+      isRecordingTrip = false;
+      tripSession.points = [];
+      tripSession.totalDistMeters = 0;
+      tripSession.lastRecordedCoord = null;
+      if (activeRecordingPolyline) {
+        map.removeLayer(activeRecordingPolyline);
+        activeRecordingPolyline = null;
       }
-      journeyStatus.textContent = 'Journey saved to History & cleared for next trip!';
-    }).catch((err) => {
-      console.error('Error archiving journey:', err);
-      journeyStatus.textContent = 'Failed to archive journey.';
+      timerEl.textContent = "00:00:00";
+      updateAdminRecordingUI();
+
+      // Automatically switch to Trips History view to see the new record
+      switchView('viewTrips');
+    }).catch(err => {
+      console.error("Error saving trip:", err);
+      alert("Failed to save trip to database: " + err.message);
     });
   });
 
-  // C. Clear Map Display Only
-  btnClearJourney.addEventListener('click', () => {
-    if (journeyPolyline) {
-      map.removeLayer(journeyPolyline);
-      journeyPolyline = null;
-      journeyStatus.textContent = 'Polyline cleared from map.';
-    } else {
-      journeyStatus.textContent = 'No polyline to clear.';
+  // Cancel & Discard
+  btnCancel.addEventListener('click', () => {
+    if (confirm("Discard this trip recording session?")) {
+      clearInterval(tripSession.timerInterval);
+      isRecordingTrip = false;
+      tripSession.points = [];
+      tripSession.totalDistMeters = 0;
+      tripSession.lastRecordedCoord = null;
+      if (activeRecordingPolyline) {
+        map.removeLayer(activeRecordingPolyline);
+        activeRecordingPolyline = null;
+      }
+      timerEl.textContent = "00:00:00";
+      updateAdminRecordingUI();
     }
   });
+}
 
-  // D. Listen to History in Firebase & Populate Dropdown
-  db.ref('history').on('value', (snap) => {
-    const val = snap.val();
-    historyCache = val || {};
+function formatDuration(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
+}
 
-    historySelect.innerHTML = '<option value="">-- Select Saved Journey --</option>';
+// =============================================================================
+// TRIP HISTORY RENDERING & CLEAR HISTORY TOOL
+// =============================================================================
+function renderTripsList(historyData) {
+  const container = document.getElementById('tripsList');
+  container.innerHTML = '';
 
-    if (!val) return;
+  const keys = Object.keys(historyData || {});
+  if (keys.length === 0) {
+    container.innerHTML = `
+      <div class="empty-trips-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <h4>No Recorded Journeys Yet</h4>
+        <p>When Admin records a journey during live sharing, it will appear here with distance and route plottings.</p>
+      </div>
+    `;
+    return;
+  }
 
-    Object.keys(val).reverse().forEach((key) => {
-      const item = val[key];
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = item.title || item.formattedDate || key;
-      historySelect.appendChild(opt);
+  // Reverse to show latest first
+  keys.reverse().forEach(key => {
+    const trip = historyData[key];
+    const dist = trip.distanceKm !== undefined ? trip.distanceKm : (trip.totalDistanceKm || 0.0);
+    const duration = trip.durationFormatted || (trip.durationSeconds ? formatDuration(trip.durationSeconds) : '--');
+    const ptsCount = trip.pointsCount || (trip.points ? Object.keys(trip.points).length : 0);
+    const title = trip.title || trip.formattedDate || `Recorded Journey`;
+
+    const startLat = trip.startCoords?.lat ? trip.startCoords.lat.toFixed(4) : '--';
+    const startLng = trip.startCoords?.lng ? trip.startCoords.lng.toFixed(4) : '--';
+    const endLat = trip.endCoords?.lat ? trip.endCoords.lat.toFixed(4) : '--';
+    const endLng = trip.endCoords?.lng ? trip.endCoords.lng.toFixed(4) : '--';
+
+    const card = document.createElement('div');
+    card.className = 'uber-trip-card';
+    card.innerHTML = `
+      <div class="trip-card-header">
+        <div class="trip-title-group">
+          <h4>${title}</h4>
+          <span class="trip-date">${trip.formattedDate || 'Completed Trip'}</span>
+        </div>
+        <div class="trip-badge-distance">${Number(dist).toFixed(2)} km</div>
+      </div>
+
+      <div class="trip-route-timeline">
+        <div class="timeline-point">
+          <span class="point-dot start"></span>
+          <span class="point-label">Origin</span>
+          <span class="point-value">${startLat}, ${startLng}</span>
+        </div>
+        <div class="timeline-point">
+          <span class="point-dot end"></span>
+          <span class="point-label">Destination</span>
+          <span class="point-value">${endLat}, ${endLng}</span>
+        </div>
+      </div>
+
+      <div class="trip-card-footer">
+        <div class="trip-meta-tags">
+          <span>Duration: <b>${duration}</b></span>
+          <span>Points: <b>${ptsCount}</b></span>
+        </div>
+        <button class="btn-view-route" data-key="${key}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+          </svg>
+          <span>View Route</span>
+        </button>
+      </div>
+    `;
+
+    card.querySelector('.btn-view-route').addEventListener('click', () => {
+      openTripModal(key, trip);
+    });
+
+    container.appendChild(card);
+  });
+}
+
+// Clear History Button
+function setupClearHistoryButton() {
+  document.getElementById('btnClearAllHistory').addEventListener('click', () => {
+    const confirmed = confirm("Are you sure you want to permanently clear all recorded trip history from the database?");
+    if (!confirmed) return;
+
+    db.ref('history').remove().then(() => {
+      alert("All journey history records have been cleared.");
+    }).catch(err => {
+      alert("Failed to clear history: " + err.message);
     });
   });
+}
 
-  // E. View Selected History Journey
-  historySelect.addEventListener('change', (e) => {
-    const key = e.target.value;
-    if (!key || !historyCache[key]) return;
+// =============================================================================
+// FOCUSED TRIP MODAL (Fraction Rectangle Bounding Box Viewer)
+// =============================================================================
+function openTripModal(tripKey, trip) {
+  const modal = document.getElementById('tripModal');
+  modal.classList.remove('hidden');
 
-    const item = historyCache[key];
-    const val = item.points;
+  document.getElementById('modalTripTitle').textContent = trip.title || 'Recorded Journey';
+  document.getElementById('modalDistance').textContent = `${Number(trip.distanceKm || 0).toFixed(2)} km`;
+  document.getElementById('modalDuration').textContent = trip.durationFormatted || (trip.durationSeconds ? formatDuration(trip.durationSeconds) : '--');
+  document.getElementById('modalPointsCount').textContent = `${trip.pointsCount || (trip.points ? Object.keys(trip.points).length : 0)} pts`;
 
+  // Calculate Average Speed
+  let avgSpeed = 0.0;
+  if (trip.distanceKm && trip.durationSeconds && trip.durationSeconds > 0) {
+    avgSpeed = (trip.distanceKm / (trip.durationSeconds / 3600)).toFixed(1);
+  }
+  document.getElementById('modalAvgSpeed').textContent = `${avgSpeed} km/h`;
+
+  const m = getModalMap();
+  setTimeout(() => {
+    m.invalidateSize();
+
+    // Clean up previous layers
+    if (modalPolyline) m.removeLayer(modalPolyline);
+    if (modalStartMarker) m.removeLayer(modalStartMarker);
+    if (modalEndMarker) m.removeLayer(modalEndMarker);
+
+    // Extract coordinate array
     const rawPoints = [];
+    const val = trip.points;
     if (Array.isArray(val)) {
       val.forEach(p => { if (p) rawPoints.push(p); });
-    } else if (typeof val === 'object') {
+    } else if (typeof val === 'object' && val !== null) {
       Object.keys(val).forEach(k => { if (val[k]) rawPoints.push(val[k]); });
     }
 
-    rawPoints.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
     const coords = rawPoints
       .filter(p => !isNaN(parseFloat(p.lat)) && !isNaN(parseFloat(p.lng)))
       .map(p => [parseFloat(p.lat), parseFloat(p.lng)]);
 
     if (coords.length > 0) {
-      drawJourneyPolyline(coords, `Viewing: ${item.title || 'Saved Journey'}`);
-    } else {
-      journeyStatus.textContent = 'Selected history entry has no valid coordinates.';
+      modalPolyline = L.polyline(coords, {
+        color: '#10b981',
+        weight: 5,
+        opacity: 0.95,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(m);
+
+      // Start pin (green circle)
+      modalStartMarker = L.circleMarker(coords[0], {
+        radius: 7,
+        color: '#ffffff',
+        fillColor: '#10b981',
+        fillOpacity: 1,
+        weight: 3
+      }).addTo(m).bindPopup('<b>Trip Origin</b>');
+
+      // End pin (red circle)
+      modalEndMarker = L.circleMarker(coords[coords.length - 1], {
+        radius: 7,
+        color: '#ffffff',
+        fillColor: '#ef4444',
+        fillOpacity: 1,
+        weight: 3
+      }).addTo(m).bindPopup('<b>Trip Destination</b>');
+
+      // Strictly fit to the fraction rectangle bounding box covered by the device!
+      m.fitBounds(modalPolyline.getBounds(), {
+        padding: [45, 45],
+        maxZoom: 18
+      });
     }
+  }, 200);
+}
+
+function setupTripModalClose() {
+  const modal = document.getElementById('tripModal');
+  const btnClose = document.getElementById('btnCloseModal');
+  const backdrop = modal.querySelector('.modal-backdrop');
+
+  btnClose.addEventListener('click', () => modal.classList.add('hidden'));
+  backdrop.addEventListener('click', () => modal.classList.add('hidden'));
+}
+
+// =============================================================================
+// NAVIGATION & VIEW SWITCHING
+// =============================================================================
+function switchView(targetViewId) {
+  document.querySelectorAll('.view-panel').forEach(panel => {
+    panel.classList.remove('active-view');
+  });
+
+  const targetPanel = document.getElementById(targetViewId);
+  if (targetPanel) {
+    targetPanel.classList.add('active-view');
+  }
+
+  // Update Bottom Nav active state
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-view') === targetViewId);
+  });
+
+  // Re-render Leaflet when switching to Ride Map
+  if (targetViewId === 'viewRide' && map) {
+    setTimeout(() => {
+      map.invalidateSize();
+      if (lastCoords.lat !== null && lastCoords.lng !== null) {
+        map.panTo([lastCoords.lat, lastCoords.lng]);
+      }
+    }, 100);
+  }
+}
+
+function setupNavigation() {
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const viewId = btn.getAttribute('data-view');
+      switchView(viewId);
+    });
   });
 }
 
-// 8. Recenter Floating Button
-function setupRecenterButton() {
-  document.getElementById('btnRecenter').addEventListener('click', () => {
-    if (lastCoords.lat !== null && lastCoords.lng !== null) {
-      map.panTo([lastCoords.lat, lastCoords.lng]);
-    }
+// =============================================================================
+// RIDER VS ADMIN MODE SWITCHER
+// =============================================================================
+function setupModeSwitcher() {
+  const btnRider = document.getElementById('btnRiderMode');
+  const btnAdmin = document.getElementById('btnAdminMode');
+
+  btnRider.addEventListener('click', () => {
+    currentMode = 'rider';
+    btnRider.classList.add('active');
+    btnAdmin.classList.remove('active');
+    updateAdminRecordingUI();
+  });
+
+  btnAdmin.addEventListener('click', () => {
+    currentMode = 'admin';
+    btnAdmin.classList.add('active');
+    btnRider.classList.remove('active');
+    updateAdminRecordingUI();
   });
 }
 
-// 9. Application Initialization
+// =============================================================================
+// APP INITIALIZATION
+// =============================================================================
 document.addEventListener('DOMContentLoaded', () => {
-  initMap();
+  initMainMap();
   setupFirebaseListeners();
   setupModeSwitcher();
-  setupJourneyControls();
-  setupRecenterButton();
+  setupAdminRecordingControls();
+  setupClearHistoryButton();
+  setupTripModalClose();
+  setupNavigation();
 });
