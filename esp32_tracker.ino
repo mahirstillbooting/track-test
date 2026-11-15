@@ -87,11 +87,9 @@ constexpr uint32_t CONFIRM_MSG_MS  = 1800; // 1.8s confirmation display
 constexpr uint32_t LOG_INTERVAL_MS = 15000;
 constexpr uint32_t SD_MESSAGE_MS   = 2000;
 
-// Multi-tap Backlight Toggle Configuration
-constexpr uint32_t MULTI_TAP_WINDOW_MS = 1500; // 4 taps within 1.5s
-uint8_t  b1TapCount = 0;
-uint32_t b1FirstTapAt = 0;
-bool     lcdBacklightState = true; // Controlled ONLY by 4-tap sequence
+// 2-Second Hold Backlight Toggle Configuration
+constexpr uint32_t HOLD_BACKLIGHT_MS = 2000; // Hold Button 1 for 2s to toggle backlight
+bool     lcdBacklightState = true;
 
 // ======================================================
 // OBJECTS & STATE
@@ -118,6 +116,8 @@ struct Button {
   bool pressed;
   uint32_t changedAt;
   uint32_t presses;
+  uint32_t pressedAt;
+  bool holdHandled;
 };
 
 struct LogSnapshot {
@@ -131,8 +131,8 @@ struct LogResult {
 };
 
 Button buttons[] = {
-  {BUTTON_1, false, false, 0, 0},
-  {BUTTON_2, false, false, 0, 0}
+  {BUTTON_1, false, false, 0, 0, 0, false},
+  {BUTTON_2, false, false, 0, 0, 0, false}
 };
 
 bool sharingActive     = false; // Standby on boot; starts sharing ONLY when Button 1 is pressed
@@ -580,7 +580,7 @@ void refreshLcd(uint32_t now) {
 
     case BUTTONS:
       snprintf(top, sizeof(top), "B1:START B2:STOP");
-      snprintf(bottom, sizeof(bottom), "4-Tap B1:LCD BL");
+      snprintf(bottom, sizeof(bottom), "Hold B1:LCD BL");
       break;
 
     case OUTPUTS:
@@ -596,66 +596,94 @@ void refreshLcd(uint32_t now) {
 }
 
 // ======================================================
-// BUTTONS & MULTI-TAP 4-PULSE BACKLIGHT TOGGLE
+// BUTTONS & 2-SECOND HOLD BACKLIGHT TOGGLE
 // ======================================================
 void readButtons(uint32_t now) {
-  // Check if 4-tap window expired without hitting 4
-  if (b1TapCount > 0 && (now - b1FirstTapAt > MULTI_TAP_WINDOW_MS)) {
-    b1TapCount = 0;
-  }
-
   for (uint8_t i = 0; i < 2; ++i) {
     Button &button = buttons[i];
     bool pressed = (digitalRead(button.pin) == LOW);
 
+    // Track raw electrical bounce
     if (pressed != button.rawPressed) {
       button.rawPressed = pressed;
       button.changedAt = now;
     }
-    if (pressed == button.pressed || now - button.changedAt < 35) continue;
-    button.pressed = pressed;
 
-    if (pressed) {
-      ++button.presses;
-
-      if (i == 0) {
-        // BUTTON_1 Pressed (GPIO 23)
-        // Multi-tap detection for LCD backlight
-        if (b1TapCount == 0) b1FirstTapAt = now;
-        b1TapCount++;
-
-        if (b1TapCount >= 4) {
-          // Exactly 4 rapid pulses detected: TOGGLE LCD BACKLIGHT!
+    // Debounce filter (35ms)
+    if (now - button.changedAt < 35) {
+      // While debouncing, if Button 1 is held down, continue checking 2s hold timer
+      if (button.pressed && i == 0 && !button.holdHandled) {
+        if (now - button.pressedAt >= HOLD_BACKLIGHT_MS) {
+          button.holdHandled = true;
           lcdBacklightState = !lcdBacklightState;
           if (lcdFound) {
             if (lcdBacklightState) lcd.backlight();
             else lcd.noBacklight();
           }
-          b1TapCount = 0;
-          beepsPending = 1; // 1 single quick chirp on toggle
-          buzzerEdgeAt = now;
+          enqueueBeeps(1, 40); // 1 single confirmation chirp
           lcdConfirmation("LCD BACKLIGHT", lcdBacklightState ? "Turned ON" : "Turned OFF");
-        } else if (b1TapCount == 1) {
-          // Normal START Sharing action (tap 1)
-          if (!sharingActive) {
-            sharingActive = true;
+          Serial.printf("[LCD] 2s Hold on B1 -> Backlight %s\n", lcdBacklightState ? "ON" : "OFF");
+        }
+      }
+      continue;
+    }
+
+    // Debounced state transition
+    if (pressed != button.pressed) {
+      button.pressed = pressed;
+
+      if (button.pressed) {
+        // --- BUTTON PRESSED DOWN ---
+        button.pressedAt = now;
+        button.holdHandled = false;
+        ++button.presses;
+
+        if (i == 1) {
+          // BUTTON 2 (GPIO 32): Single Click -> STOP Sharing immediately
+          if (sharingActive) {
+            sharingActive = false;
             pendingActiveSync = true;
             beepsPending = 0; // DO NOT buzz while request in flight! Wait for confirmation
-            lcdConfirmation("START SHARING", "Syncing...");
+            lcdConfirmation("STOP SHARING", "Syncing...");
           }
         }
       } else {
-        // BUTTON_2 Pressed (GPIO 32): STOP Sharing
-        if (sharingActive) {
-          sharingActive = false;
-          pendingActiveSync = true;
-          beepsPending = 0; // DO NOT buzz while request in flight! Wait for confirmation
-          lcdConfirmation("STOP SHARING", "Syncing...");
+        // --- BUTTON RELEASED ---
+        uint32_t pressDuration = now - button.pressedAt;
+
+        if (i == 0) {
+          // BUTTON 1 (GPIO 23): Single Click -> START Sharing
+          // Only fires if NOT a 2s hold (i.e. short click < 2000ms).
+          // If the user held for 2s to toggle LCD, holdHandled is true, so it NEVER starts sharing!
+          if (!button.holdHandled && pressDuration >= 40) {
+            if (!sharingActive) {
+              sharingActive = true;
+              pendingActiveSync = true;
+              beepsPending = 0; // Buzzer will chirp 2 beeps on confirmation
+              lcdConfirmation("START SHARING", "Syncing...");
+            }
+          }
         }
-        b1TapCount = 0;
+
+        button.holdHandled = false;
       }
 
       showPage(BUTTONS);
+    } else {
+      // Button remains continuously held down: check 2s hold condition
+      if (button.pressed && i == 0 && !button.holdHandled) {
+        if (now - button.pressedAt >= HOLD_BACKLIGHT_MS) {
+          button.holdHandled = true;
+          lcdBacklightState = !lcdBacklightState;
+          if (lcdFound) {
+            if (lcdBacklightState) lcd.backlight();
+            else lcd.noBacklight();
+          }
+          enqueueBeeps(1, 40); // 1 single confirmation chirp
+          lcdConfirmation("LCD BACKLIGHT", lcdBacklightState ? "Turned ON" : "Turned OFF");
+          Serial.printf("[LCD] 2s Hold on B1 -> Backlight %s\n", lcdBacklightState ? "ON" : "OFF");
+        }
+      }
     }
   }
 }
