@@ -124,6 +124,7 @@
 
         <!-- Desktop Sidebar / Mobile Bottom Sheet -->
         <div class="ride-controls-panel">
+          <div class="sheet-grabber-bar"></div>
           
           <!-- Admin Journey Recording Bar (Only visible in Admin Mode) -->
           <div id="adminRecordingBar" class="admin-trip-controls hidden">
@@ -258,16 +259,18 @@
           
           <div class="trips-page-header">
             <div class="header-titles">
-              <h2>Recorded Journeys</h2>
-              <p>Trip history with precise distance records & route bounds</p>
+              <h2>Order History</h2>
+              <p>Showing all your recorded journeys & route plots</p>
             </div>
-            <button id="btnClearAllHistory" class="btn-clear-history" title="Purge history records from database">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-              <span>Clear History</span>
-            </button>
+            <div class="header-actions">
+              <button id="btnClearAllHistory" class="btn-clear-history" title="Purge history records from database">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                <span>Clear History</span>
+              </button>
+            </div>
           </div>
 
           <!-- Trip List View (Desktop Multi-Column Grid) -->
@@ -284,13 +287,13 @@
 
         </div>
 
-        <!-- Focused Trip Modal (Fraction rectangle bounding box only) -->
+        <!-- Focused Trip Modal (Fraction rectangle bounding box only - Uber Style) -->
         <div id="tripModal" class="trip-modal hidden">
           <div class="modal-backdrop"></div>
           <div class="modal-card">
             <div class="modal-header">
               <div class="modal-title-col">
-                <span class="modal-sub">RECORDED JOURNEY BOUNDS</span>
+                <span class="modal-sub">TRIP SUMMARY & BOUNDS</span>
                 <h3 id="modalTripTitle">Trip Details</h3>
               </div>
               <button id="btnCloseModal" class="btn-close-modal" aria-label="Close">
@@ -301,17 +304,64 @@
               </button>
             </div>
 
+            <!-- Route Header Banner (Uber style) -->
+            <div class="modal-route-banner">
+              <div class="banner-route-flow">
+                <div class="banner-point">
+                  <span class="banner-dot start"></span>
+                  <div class="banner-text">
+                    <span id="modalOriginText" class="b-address">Lalbagh Fort, Old Dhaka</span>
+                    <span class="b-caption">Pickup point</span>
+                  </div>
+                </div>
+                <div class="banner-point">
+                  <span class="banner-dot end"></span>
+                  <div class="banner-text">
+                    <span id="modalDestText" class="b-address">New Market, Mirpur Rd</span>
+                    <span class="b-caption">Destination</span>
+                  </div>
+                </div>
+              </div>
+              <div class="banner-stat-col">
+                <div class="banner-meta">
+                  <span class="b-label">Distance</span>
+                  <span id="modalDistance" class="b-val">0.00 km</span>
+                </div>
+                <div class="banner-meta">
+                  <span class="b-label">Payment</span>
+                  <span class="b-val fare-accent">৳45</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Focused Map (Fraction rectangle bounding box only) -->
             <div class="modal-map-viewport">
               <div id="modalMap" class="modal-map-canvas"></div>
             </div>
 
+            <!-- Vehicle & Driver Card (Uber style) -->
+            <div class="modal-driver-card">
+              <div class="driver-avatar-box">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              </div>
+              <div class="driver-details">
+                <div class="driver-name-row">
+                  <span class="d-name">Aminul Islam</span>
+                  <span class="d-badge">Driver</span>
+                </div>
+                <span class="d-vehicle">CHALOK Electric Rickshaw • DHA-HA-11-2041</span>
+              </div>
+              <div class="driver-rating">
+                <span class="star">★</span>
+                <span>5.0</span>
+              </div>
+            </div>
+
             <!-- Modal Trip Summary Bar -->
             <div class="modal-trip-summary">
-              <div class="modal-stat">
-                <span class="m-label">Distance Travelled</span>
-                <span id="modalDistance" class="m-val">0.00 km</span>
-              </div>
               <div class="modal-stat">
                 <span class="m-label">Duration</span>
                 <span id="modalDuration" class="m-val">0 min</span>
@@ -324,6 +374,14 @@
                 <span class="m-label">Avg Speed</span>
                 <span id="modalAvgSpeed" class="m-val">0.0 km/h</span>
               </div>
+              <div class="modal-stat">
+                <span class="m-label">Status</span>
+                <span class="m-val status-val">Completed</span>
+              </div>
+            </div>
+
+            <div class="modal-action-footer">
+              <button id="btnDismissModal" class="btn-modal-action">Close Details</button>
             </div>
           </div>
         </div>
@@ -430,7 +488,7 @@
     <!-- Bottom Navigation Bar (ONLY visible on Mobile screen < 768px) -->
     <nav class="mobile-bottom-nav">
       <button class="mobile-nav-item active" data-view="viewRide">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
           <line x1="8" y1="2" x2="8" y2="18"></line>
           <line x1="16" y1="6" x2="16" y2="22"></line>
@@ -439,7 +497,7 @@
       </button>
 
       <button class="mobile-nav-item" data-view="viewTrips">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
           <polyline points="14 2 14 8 20 8"></polyline>
           <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -449,11 +507,19 @@
       </button>
 
       <button class="mobile-nav-item" data-view="viewTelemetry">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"></circle>
           <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
         </svg>
         <span>Telemetry</span>
+      </button>
+
+      <button id="btnMobileModeToggle" class="mobile-nav-item" title="Toggle Rider/Admin Mode">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+        <span id="mobileModeLabel">Rider</span>
       </button>
     </nav>
 

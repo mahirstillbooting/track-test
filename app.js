@@ -40,10 +40,19 @@ let lastSpeedCalcCoords = { lat: null, lng: null, time: null };
 let currentSpeedKmh = 0.0;
 let animationFrameId = null;
 
-// Telemetry & Device Packet Clock
-let lastPacketWallTime = null;
-let lastPacketDeviceTs = null;
-let lastPacketDataString = '';
+// Telemetry & Last Active Device Record Clock
+// "The purpose of the record is when was the last active data we received from the device and not the current one. The last means the very last moment before the device went standby"
+let lastActiveWallTime = null;
+let lastActiveDeviceTs = null;
+
+try {
+  const cached = localStorage.getItem('chalok_last_active_record');
+  if (cached) {
+    const parsed = JSON.parse(cached);
+    lastActiveWallTime = parsed.wallTime || null;
+    lastActiveDeviceTs = parsed.deviceTs || null;
+  }
+} catch (e) {}
 
 // Admin Journey Recording State
 let isRecordingTrip = false;
@@ -282,42 +291,48 @@ function updateLastRecordedDisplay() {
   const pillText = document.getElementById('lastRecordedText');
   const telemText = document.getElementById('telemLastRec');
 
-  if (!lastPacketWallTime) {
-    if (pillText) pillText.textContent = 'Waiting for GPS...';
-    if (telemText) telemText.textContent = 'No packets received';
+  if (!lastActiveWallTime) {
+    if (pillText) pillText.textContent = isSharingActive ? 'Streaming live...' : 'Waiting for device...';
+    if (telemText) telemText.textContent = isSharingActive ? 'Streaming live...' : 'Waiting for device...';
     return;
   }
 
-  const elapsedSec = Math.floor((Date.now() - lastPacketWallTime) / 1000);
+  const elapsedSec = Math.floor((Date.now() - lastActiveWallTime) / 1000);
   let relativeAgeStr = '';
 
-  if (elapsedSec < 4) {
+  if (elapsedSec < 5) {
     relativeAgeStr = 'Just now';
   } else if (elapsedSec < 60) {
     relativeAgeStr = `${elapsedSec}s ago`;
   } else if (elapsedSec < 3600) {
     const m = Math.floor(elapsedSec / 60);
-    relativeAgeStr = `${m}m ago ${!isSharingActive ? '(Standby)' : ''}`;
+    relativeAgeStr = `${m}m ago`;
   } else {
     const h = Math.floor(elapsedSec / 3600);
-    relativeAgeStr = `>${h}h ago (Offline)`;
+    relativeAgeStr = `>${h}h ago`;
   }
 
   // Determine actual recorded clock time
   let clockTimeStr = '';
-  if (lastPacketDeviceTs && lastPacketDeviceTs > 1577836800000) {
+  if (lastActiveDeviceTs && lastActiveDeviceTs > 1577836800000) {
     // GPS Real-world UTC epoch
-    const d = new Date(lastPacketDeviceTs);
-    clockTimeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const d = new Date(lastActiveDeviceTs);
+    clockTimeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   } else {
     // Wall time receipt of device packet
-    const d = new Date(lastPacketWallTime);
-    clockTimeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const d = new Date(lastActiveWallTime);
+    clockTimeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
-  const fullDisplay = `Rec: ${clockTimeStr} (${relativeAgeStr})`;
-  if (pillText) pillText.textContent = fullDisplay;
-  if (telemText) telemText.textContent = fullDisplay;
+  if (isSharingActive) {
+    const fullDisplay = `Live: ${clockTimeStr} (${relativeAgeStr})`;
+    if (pillText) pillText.innerHTML = `<span class="rec-prefix live">Live:</span> ${clockTimeStr} (${relativeAgeStr})`;
+    if (telemText) telemText.textContent = fullDisplay;
+  } else {
+    const fullDisplay = `Last Active: ${clockTimeStr} (${relativeAgeStr} • Standby)`;
+    if (pillText) pillText.innerHTML = `<span class="rec-prefix standby">Last Active:</span> ${clockTimeStr} (${relativeAgeStr} • Standby)`;
+    if (telemText) telemText.textContent = fullDisplay;
+  }
 }
 
 setInterval(updateLastRecordedDisplay, 1000);
@@ -354,8 +369,9 @@ function setupFirebaseListeners() {
       sharingLabel.textContent = 'STANDBY';
     }
 
-    // Refresh Admin Journey Recording State
+    // Refresh Admin Journey Recording State & Last Recorded Display
     updateAdminRecordingUI();
+    updateLastRecordedDisplay();
   });
 
   // C. Live Telemetry & GPS Coordinates (tracker/current)
@@ -363,11 +379,17 @@ function setupFirebaseListeners() {
     const data = snap.val();
     if (!data) return;
 
-    const dataString = JSON.stringify(data);
-    if (dataString !== lastPacketDataString) {
-      lastPacketDataString = dataString;
-      lastPacketWallTime = Date.now();
-      lastPacketDeviceTs = data.timestamp || null;
+    // Only update "last active data" when the device is actively sharing!
+    // "The purpose of the record is when was the last active data we received from the device and not the current one. The last means the very last moment before the device went standby"
+    if (isSharingActive) {
+      lastActiveWallTime = Date.now();
+      lastActiveDeviceTs = data.timestamp || null;
+      try {
+        localStorage.setItem('chalok_last_active_record', JSON.stringify({
+          wallTime: lastActiveWallTime,
+          deviceTs: lastActiveDeviceTs
+        }));
+      } catch (e) {}
       updateLastRecordedDisplay();
     }
 
@@ -509,7 +531,7 @@ function updateActivePolyline() {
   const latLngs = tripSession.points.map(p => [p.lat, p.lng]);
   if (!activeRecordingPolyline) {
     activeRecordingPolyline = L.polyline(latLngs, {
-      color: '#9b72cb', // Custom purple from signature sparkle gradient
+      color: '#5e35b1', // Dark purple for high contrast route plotting
       weight: 5,
       opacity: 0.95,
       lineCap: 'round',
@@ -672,40 +694,108 @@ function renderTripsList(historyData) {
     return;
   }
 
+  // Active orders section (if currently recording)
+  if (isRecordingTrip) {
+    const activeHeader = document.createElement('div');
+    activeHeader.className = 'trips-section-title';
+    activeHeader.textContent = 'Active orders';
+    container.appendChild(activeHeader);
+
+    const curDistKm = (tripSession.totalDistMeters / 1000).toFixed(2);
+    const activeCard = document.createElement('div');
+    activeCard.className = 'uber-trip-card active-live-trip';
+    activeCard.innerHTML = `
+      <div class="trip-card-main">
+        <div class="trip-route-timeline">
+          <div class="timeline-point">
+            <span class="point-dot start"></span>
+            <div class="point-text-block">
+              <span class="point-address">${tripSession.points[0] ? `${tripSession.points[0].lat.toFixed(4)}, ${tripSession.points[0].lng.toFixed(4)}` : 'Live Fleet Position'}</span>
+              <span class="point-role-caption">Pickup point</span>
+            </div>
+          </div>
+          <div class="timeline-point">
+            <span class="point-dot end live-pulse"></span>
+            <div class="point-text-block">
+              <span class="point-address">Vehicle Broadcasting</span>
+              <span class="point-role-caption">Recording in progress</span>
+            </div>
+          </div>
+        </div>
+        <div class="trip-right-col">
+          <div class="trip-metric-item">
+            <span class="m-caption">Status</span>
+            <span class="m-val accent-val">RECORDING</span>
+          </div>
+          <div class="trip-metric-item">
+            <span class="m-caption">Distance</span>
+            <span class="m-val dist-val">${curDistKm} km</span>
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(activeCard);
+  }
+
+  // Past orders section
+  const pastHeader = document.createElement('div');
+  pastHeader.className = 'trips-section-title';
+  pastHeader.textContent = 'Past orders';
+  container.appendChild(pastHeader);
+
   // Reverse to show latest first
   keys.reverse().forEach(key => {
     const trip = historyData[key];
     const dist = trip.distanceKm !== undefined ? trip.distanceKm : (trip.totalDistanceKm || 0.0);
     const duration = trip.durationFormatted || (trip.durationSeconds ? formatDuration(trip.durationSeconds) : '--');
     const ptsCount = trip.pointsCount || (trip.points ? Object.keys(trip.points).length : 0);
-    const title = trip.title || trip.formattedDate || `Recorded Journey`;
 
     const startLat = trip.startCoords?.lat ? trip.startCoords.lat.toFixed(4) : '--';
     const startLng = trip.startCoords?.lng ? trip.startCoords.lng.toFixed(4) : '--';
     const endLat = trip.endCoords?.lat ? trip.endCoords.lat.toFixed(4) : '--';
     const endLng = trip.endCoords?.lng ? trip.endCoords.lng.toFixed(4) : '--';
 
+    // Pretty address names matching Uber UI
+    let originName = `${startLat}, ${startLng}`;
+    let destName = `${endLat}, ${endLng}`;
+    if (trip.title && trip.title.toLowerCase().includes('lalbagh')) {
+      originName = 'Lalbagh Fort, Old Dhaka';
+      destName = 'New Market, Mirpur Rd';
+    } else if (trip.originName) {
+      originName = trip.originName;
+      destName = trip.destinationName || destName;
+    }
+
     const card = document.createElement('div');
     card.className = 'uber-trip-card';
     card.innerHTML = `
-      <div class="trip-card-header">
-        <div class="trip-title-group">
-          <h4>${title}</h4>
-          <span class="trip-date">${trip.formattedDate || 'Completed Trip'}</span>
+      <div class="trip-card-main">
+        <div class="trip-route-timeline">
+          <div class="timeline-point">
+            <span class="point-dot start"></span>
+            <div class="point-text-block">
+              <span class="point-address">${originName}</span>
+              <span class="point-role-caption">Pickup point</span>
+            </div>
+          </div>
+          <div class="timeline-point">
+            <span class="point-dot end"></span>
+            <div class="point-text-block">
+              <span class="point-address">${destName}</span>
+              <span class="point-role-caption">Destination</span>
+            </div>
+          </div>
         </div>
-        <div class="trip-badge-distance">${Number(dist).toFixed(2)} km</div>
-      </div>
 
-      <div class="trip-route-timeline">
-        <div class="timeline-point">
-          <span class="point-dot start"></span>
-          <span class="point-label">Origin</span>
-          <span class="point-value">${startLat}, ${startLng}</span>
-        </div>
-        <div class="timeline-point">
-          <span class="point-dot end"></span>
-          <span class="point-label">Destination</span>
-          <span class="point-value">${endLat}, ${endLng}</span>
+        <div class="trip-right-col">
+          <div class="trip-metric-item">
+            <span class="m-caption">Payment</span>
+            <span class="m-val fare-val">৳45</span>
+          </div>
+          <div class="trip-metric-item">
+            <span class="m-caption">Distance</span>
+            <span class="m-val dist-val">${Number(dist).toFixed(2)} km</span>
+          </div>
         </div>
       </div>
 
@@ -713,6 +803,7 @@ function renderTripsList(historyData) {
         <div class="trip-meta-tags">
           <span>Duration: <b>${duration}</b></span>
           <span>Points: <b>${ptsCount}</b></span>
+          <span class="trip-date">${trip.formattedDate || ''}</span>
         </div>
         <button class="btn-view-route" data-key="${key}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -746,7 +837,7 @@ function setupClearHistoryButton() {
 }
 
 // =============================================================================
-// FOCUSED TRIP MODAL (Fraction Rectangle Bounding Box Viewer)
+// FOCUSED TRIP MODAL (Fraction Rectangle Bounding Box Viewer - Uber Details)
 // =============================================================================
 function openTripModal(tripKey, trip) {
   const modal = document.getElementById('tripModal');
@@ -763,6 +854,25 @@ function openTripModal(tripKey, trip) {
     avgSpeed = (trip.distanceKm / (trip.durationSeconds / 3600)).toFixed(1);
   }
   document.getElementById('modalAvgSpeed').textContent = `${avgSpeed} km/h`;
+
+  // Resolve origin and destination labels
+  let originName = 'Trip Origin';
+  let destName = 'Trip Destination';
+  if (trip.title && trip.title.toLowerCase().includes('lalbagh')) {
+    originName = 'Lalbagh Fort, Old Dhaka';
+    destName = 'New Market, Mirpur Rd';
+  } else if (trip.originName) {
+    originName = trip.originName;
+    destName = trip.destinationName || destName;
+  } else if (trip.startCoords) {
+    originName = `${trip.startCoords.lat.toFixed(4)}, ${trip.startCoords.lng.toFixed(4)}`;
+    destName = trip.endCoords ? `${trip.endCoords.lat.toFixed(4)}, ${trip.endCoords.lng.toFixed(4)}` : 'Trip Destination';
+  }
+
+  const originEl = document.getElementById('modalOriginText');
+  const destEl = document.getElementById('modalDestText');
+  if (originEl) originEl.textContent = originName;
+  if (destEl) destEl.textContent = destName;
 
   const m = getModalMap();
   setTimeout(() => {
@@ -789,32 +899,32 @@ function openTripModal(tripKey, trip) {
 
     if (coords.length > 0) {
       // Google Maps style clean minimal route plot
-      // Outer casing for contrast against street map tiles
+      // Outer casing for high contrast against street map tiles
       modalCasing = L.polyline(coords, {
-        color: 'rgba(30, 20, 48, 0.75)',
+        color: 'rgba(20, 10, 35, 0.85)',
         weight: 8,
-        opacity: 0.8,
+        opacity: 0.85,
         lineCap: 'round',
         lineJoin: 'round'
       }).addTo(m);
 
-      // Core route polyline in custom purple #9b72cb
+      // Core route polyline in dark purple #5e35b1
       modalPolyline = L.polyline(coords, {
-        color: '#9b72cb',
+        color: '#5e35b1',
         weight: 5,
         opacity: 1.0,
         lineCap: 'round',
         lineJoin: 'round'
       }).addTo(m);
 
-      // Start pin (custom purple circle)
+      // Start pin (dark purple circle)
       modalStartMarker = L.circleMarker(coords[0], {
         radius: 7,
         color: '#ffffff',
-        fillColor: '#9b72cb',
+        fillColor: '#5e35b1',
         fillOpacity: 1,
         weight: 3
-      }).addTo(m).bindPopup('<b>Trip Origin: Lalbagh Fort</b>');
+      }).addTo(m).bindPopup(`<b>Pickup:</b> ${originName}`);
 
       // End pin (sparkle coral circle)
       modalEndMarker = L.circleMarker(coords[coords.length - 1], {
@@ -823,7 +933,7 @@ function openTripModal(tripKey, trip) {
         fillColor: '#d96570',
         fillOpacity: 1,
         weight: 3
-      }).addTo(m).bindPopup('<b>Trip Destination: New Market</b>');
+      }).addTo(m).bindPopup(`<b>Destination:</b> ${destName}`);
 
       // Strictly fit to the fraction rectangle bounding box covered by the device!
       m.fitBounds(modalPolyline.getBounds(), {
@@ -837,10 +947,12 @@ function openTripModal(tripKey, trip) {
 function setupTripModalClose() {
   const modal = document.getElementById('tripModal');
   const btnClose = document.getElementById('btnCloseModal');
+  const btnDismiss = document.getElementById('btnDismissModal');
   const backdrop = modal.querySelector('.modal-backdrop');
 
-  btnClose.addEventListener('click', () => modal.classList.add('hidden'));
-  backdrop.addEventListener('click', () => modal.classList.add('hidden'));
+  if (btnClose) btnClose.addEventListener('click', () => modal.classList.add('hidden'));
+  if (btnDismiss) btnDismiss.addEventListener('click', () => modal.classList.add('hidden'));
+  if (backdrop) backdrop.addEventListener('click', () => modal.classList.add('hidden'));
 }
 
 // =============================================================================
@@ -888,23 +1000,47 @@ function setupNavigation() {
 // =============================================================================
 // RIDER VS ADMIN MODE SWITCHER
 // =============================================================================
+function setAppMode(mode) {
+  currentMode = mode;
+  const btnRider = document.getElementById('btnRiderMode');
+  const btnAdmin = document.getElementById('btnAdminMode');
+  const btnMobile = document.getElementById('btnMobileModeToggle');
+  const mobileLabel = document.getElementById('mobileModeLabel');
+
+  if (btnRider && btnAdmin) {
+    btnRider.classList.toggle('active', mode === 'rider');
+    btnAdmin.classList.toggle('active', mode === 'admin');
+  }
+
+  if (btnMobile) {
+    btnMobile.classList.toggle('active', mode === 'admin');
+  }
+
+  if (mobileLabel) {
+    mobileLabel.textContent = mode === 'admin' ? 'Admin' : 'Rider';
+  }
+
+  updateAdminRecordingUI();
+}
+
 function setupModeSwitcher() {
   const btnRider = document.getElementById('btnRiderMode');
   const btnAdmin = document.getElementById('btnAdminMode');
+  const btnMobile = document.getElementById('btnMobileModeToggle');
 
-  btnRider.addEventListener('click', () => {
-    currentMode = 'rider';
-    btnRider.classList.add('active');
-    btnAdmin.classList.remove('active');
-    updateAdminRecordingUI();
-  });
+  if (btnRider) {
+    btnRider.addEventListener('click', () => setAppMode('rider'));
+  }
 
-  btnAdmin.addEventListener('click', () => {
-    currentMode = 'admin';
-    btnAdmin.classList.add('active');
-    btnRider.classList.remove('active');
-    updateAdminRecordingUI();
-  });
+  if (btnAdmin) {
+    btnAdmin.addEventListener('click', () => setAppMode('admin'));
+  }
+
+  if (btnMobile) {
+    btnMobile.addEventListener('click', () => {
+      setAppMode(currentMode === 'rider' ? 'admin' : 'rider');
+    });
+  }
 }
 
 // =============================================================================

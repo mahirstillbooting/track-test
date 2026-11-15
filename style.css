@@ -336,18 +336,18 @@ html, body {
   max-height: none !important;
 }
 
-/* Floating Top Bar on Map */
+/* Floating Top Bar on Map (Positioned on top-left to leave top-right Layer Theme Switcher clear) */
 .floating-top-bar {
   position: absolute;
   top: 14px;
   left: 14px;
-  right: 14px;
   z-index: 1000;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
   pointer-events: none;
+  max-width: calc(100% - 130px);
 }
 
 .sharing-pill {
@@ -400,12 +400,23 @@ html, body {
   background: rgba(30, 31, 32, 0.94);
   backdrop-filter: blur(10px);
   border: 1px solid var(--gm-border);
-  padding: 7px 12px;
+  padding: 6px 12px;
   border-radius: var(--radius-pill);
   font-size: 0.74rem;
   font-weight: 600;
   color: var(--gm-text-secondary);
   box-shadow: var(--shadow-float);
+  white-space: nowrap;
+}
+
+.rec-prefix.live {
+  color: var(--gm-accent);
+  font-weight: 700;
+}
+
+.rec-prefix.standby {
+  color: var(--gm-text-muted);
+  font-weight: 700;
 }
 
 .recorded-pill svg {
@@ -449,6 +460,21 @@ html, body {
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+}
+
+.sheet-grabber-bar {
+  display: none;
+  width: 42px;
+  height: 4px;
+  background: var(--gm-border);
+  border-radius: var(--radius-pill);
+  margin: 0 auto 6px auto;
+}
+
+@media (max-width: 767px) {
+  .sheet-grabber-bar {
+    display: block;
+  }
 }
 
 /* Desktop Widescreen Layout (>= 768px) */
@@ -929,7 +955,17 @@ html, body {
   margin: 0 auto;
 }
 
-/* Individual Trip Card */
+.trips-section-title {
+  grid-column: 1 / -1;
+  font-size: 0.96rem;
+  font-weight: 800;
+  color: var(--gm-text-primary);
+  margin-top: 8px;
+  margin-bottom: 2px;
+  letter-spacing: -0.01em;
+}
+
+/* Individual Trip Card (Uber/Grab Style from Reference) */
 .uber-trip-card {
   background: var(--gm-bg-surface);
   border: 1px solid var(--gm-border);
@@ -942,92 +978,133 @@ html, body {
   transition: var(--transition);
 }
 
+.uber-trip-card.active-live-trip {
+  border-color: var(--gm-accent);
+  background: var(--gm-bg-hover);
+}
+
 .uber-trip-card:hover {
   background: var(--gm-bg-hover);
   border-color: var(--gm-accent);
 }
 
-.trip-card-header {
+.trip-card-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-}
-
-.trip-title-group h4 {
-  font-size: 0.98rem;
-  font-weight: 700;
-  color: var(--gm-text-primary);
-}
-
-.trip-title-group .trip-date {
-  font-size: 0.74rem;
-  color: var(--gm-text-muted);
-}
-
-.trip-badge-distance {
-  background: var(--gm-accent-bg);
-  color: var(--gm-accent-text);
-  border: 1px solid rgba(168, 199, 250, 0.4);
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 0.82rem;
-  font-weight: 800;
+  gap: 16px;
 }
 
 /* Route Timeline Graphic */
 .trip-route-timeline {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   position: relative;
-  padding-left: 20px;
+  padding-left: 24px;
+  flex: 1;
 }
 
 .trip-route-timeline::before {
   content: "";
   position: absolute;
-  left: 6px;
-  top: 9px;
-  bottom: 9px;
+  left: 5px;
+  top: 10px;
+  bottom: 12px;
   width: 2px;
   background: var(--gm-border);
 }
 
 .timeline-point {
   position: relative;
-  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .point-dot {
   position: absolute;
-  left: -20px;
-  top: 4px;
-  width: 10px;
-  height: 10px;
+  left: -24px;
+  top: 3px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
 }
 
 .point-dot.start {
-  background: #9b72cb;
-  box-shadow: 0 0 6px #9b72cb;
+  background: #5e35b1;
+  box-shadow: 0 0 8px rgba(94, 53, 177, 0.6);
+  border: 2px solid #ffffff;
 }
 
 .point-dot.end {
-  background: #ffffff;
-  border: 2px solid var(--gm-status-stopped-border);
+  background: #1e1f20;
+  border: 2px solid var(--gm-accent);
+  border-radius: 2px;
 }
 
-.point-label {
-  font-size: 0.65rem;
-  color: var(--gm-text-muted);
-  text-transform: uppercase;
+.point-dot.end.live-pulse {
+  background: #4285f4;
+  border-radius: 50%;
+  animation: pulseDot 1.5s infinite;
+}
+
+.point-text-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.point-address {
+  font-size: 0.88rem;
   font-weight: 700;
-  display: block;
+  color: var(--gm-text-primary);
+  line-height: 1.25;
 }
 
-.point-value {
-  color: var(--gm-text-secondary);
+.point-role-caption {
+  font-size: 0.68rem;
+  color: var(--gm-text-muted);
   font-weight: 600;
+  margin-top: 2px;
+}
+
+.trip-right-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  text-align: right;
+  min-width: 72px;
+}
+
+.trip-metric-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.trip-metric-item .m-caption {
+  font-size: 0.66rem;
+  color: var(--gm-text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.trip-metric-item .fare-val {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--gm-text-primary);
+}
+
+.trip-metric-item .dist-val {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--gm-accent);
+}
+
+.trip-metric-item .accent-val {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: #ff5252;
 }
 
 .trip-card-footer {
@@ -1040,8 +1117,9 @@ html, body {
 
 .trip-meta-tags {
   display: flex;
+  align-items: center;
   gap: 12px;
-  font-size: 0.75rem;
+  font-size: 0.74rem;
   color: var(--gm-text-muted);
 }
 
@@ -1049,13 +1127,18 @@ html, body {
   color: var(--gm-text-primary);
 }
 
+.trip-date {
+  font-size: 0.7rem;
+  color: var(--gm-text-muted);
+}
+
 .btn-view-route {
   background: var(--gm-bg-hover);
   border: 1px solid var(--gm-border);
   color: var(--gm-accent-text);
-  padding: 7px 14px;
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
   display: inline-flex;
@@ -1071,7 +1154,7 @@ html, body {
 }
 
 /* ==========================================================================
-   FOCUSED TRIP MODAL (Fraction Rectangle Bounding Box Map)
+   FOCUSED TRIP MODAL (Fraction Rectangle Bounding Box Map - Uber Style)
    ========================================================================== */
 .trip-modal {
   position: fixed;
@@ -1101,16 +1184,16 @@ html, body {
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 860px;
-  max-height: 90vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   box-shadow: var(--shadow-float);
   animation: modalScale 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .modal-header {
-  padding: 16px 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--gm-border-subtle);
   display: flex;
   align-items: center;
@@ -1125,7 +1208,7 @@ html, body {
 }
 
 .modal-title-col h3 {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 800;
   color: var(--gm-text-primary);
 }
@@ -1134,8 +1217,8 @@ html, body {
   background: var(--gm-bg-hover);
   border: 1px solid var(--gm-border);
   color: var(--gm-text-secondary);
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1149,10 +1232,107 @@ html, body {
   color: var(--gm-text-primary);
 }
 
+/* Modal Route Banner */
+.modal-route-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--gm-bg-hover);
+  border-bottom: 1px solid var(--gm-border-subtle);
+  gap: 16px;
+}
+
+.banner-route-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  padding-left: 20px;
+  flex: 1;
+}
+
+.banner-route-flow::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 7px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--gm-border);
+}
+
+.banner-point {
+  position: relative;
+}
+
+.banner-dot {
+  position: absolute;
+  left: -20px;
+  top: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.banner-dot.start {
+  background: #5e35b1;
+  border: 2px solid #ffffff;
+}
+
+.banner-dot.end {
+  background: #1e1f20;
+  border: 2px solid var(--gm-accent);
+  border-radius: 2px;
+}
+
+.banner-text .b-address {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--gm-text-primary);
+}
+
+.banner-text .b-caption {
+  font-size: 0.65rem;
+  color: var(--gm-text-muted);
+  font-weight: 600;
+  display: block;
+}
+
+.banner-stat-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.banner-meta {
+  text-align: right;
+}
+
+.banner-meta .b-label {
+  font-size: 0.65rem;
+  color: var(--gm-text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  display: block;
+}
+
+.banner-meta .b-val {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--gm-text-primary);
+}
+
+.banner-meta .b-val.fare-accent {
+  color: var(--gm-accent);
+}
+
 .modal-map-viewport {
-  height: 420px;
+  height: 380px;
   width: 100%;
   position: relative;
+  min-height: 280px;
 }
 
 .modal-map-canvas {
@@ -1163,13 +1343,134 @@ html, body {
   background: var(--gm-bg-canvas);
 }
 
+/* Modal Driver Card (Uber style from Screen 2) */
+.modal-driver-card {
+  display: flex;
+  align-items: center;
+  padding: 12px 20px;
+  background: var(--gm-bg-surface);
+  border-top: 1px solid var(--gm-border-subtle);
+  gap: 14px;
+}
+
+.driver-avatar-box {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--gm-bg-hover);
+  border: 1px solid var(--gm-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gm-accent);
+}
+
+.driver-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.driver-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.driver-name-row .d-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--gm-text-primary);
+}
+
+.driver-name-row .d-badge {
+  font-size: 0.65rem;
+  background: var(--gm-bg-hover);
+  border: 1px solid var(--gm-border-subtle);
+  color: var(--gm-text-muted);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+}
+
+.driver-details .d-vehicle {
+  font-size: 0.74rem;
+  color: var(--gm-text-secondary);
+}
+
+.driver-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--gm-text-primary);
+  background: var(--gm-bg-hover);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--gm-border-subtle);
+}
+
+.driver-rating .star {
+  color: #fbbc04;
+}
+
 .modal-trip-summary {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  padding: 16px 20px;
+  padding: 14px 20px;
   background: var(--gm-bg-hover);
   border-top: 1px solid var(--gm-border-subtle);
   gap: 12px;
+}
+
+.modal-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-stat .m-label {
+  font-size: 0.65rem;
+  color: var(--gm-text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.modal-stat .m-val {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--gm-text-primary);
+}
+
+.modal-stat .m-val.status-val {
+  color: var(--gm-accent);
+}
+
+.modal-action-footer {
+  padding: 12px 20px;
+  background: var(--gm-bg-surface);
+  border-top: 1px solid var(--gm-border-subtle);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-modal-action {
+  background: var(--gm-bg-hover);
+  border: 1px solid var(--gm-border);
+  color: var(--gm-text-primary);
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-modal-action:hover {
+  background: var(--gm-accent);
+  color: #041c2c;
+  border-color: var(--gm-accent);
 }
 
 .modal-stat {
