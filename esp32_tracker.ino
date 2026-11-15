@@ -620,7 +620,8 @@ void readButtons(uint32_t now) {
             if (lcdBacklightState) lcd.backlight();
             else lcd.noBacklight();
           }
-          enqueueBeeps(1, 40); // 1 single confirmation chirp
+          beepsPending = 1;
+          buzzerEdgeAt = now;
           lcdConfirmation("LCD BACKLIGHT", lcdBacklightState ? "Turned ON" : "Turned OFF");
           Serial.printf("[LCD] 2s Hold on B1 -> Backlight %s\n", lcdBacklightState ? "ON" : "OFF");
         }
@@ -679,7 +680,8 @@ void readButtons(uint32_t now) {
             if (lcdBacklightState) lcd.backlight();
             else lcd.noBacklight();
           }
-          enqueueBeeps(1, 40); // 1 single confirmation chirp
+          beepsPending = 1;
+          buzzerEdgeAt = now;
           lcdConfirmation("LCD BACKLIGHT", lcdBacklightState ? "Turned ON" : "Turned OFF");
           Serial.printf("[LCD] 2s Hold on B1 -> Backlight %s\n", lcdBacklightState ? "ON" : "OFF");
         }
