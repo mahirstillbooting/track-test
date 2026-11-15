@@ -135,8 +135,8 @@ Button buttons[] = {
   {BUTTON_2, false, false, 0, 0}
 };
 
-bool sharingActive     = true; // Active on boot; controllable via B1 & B2
-bool pendingActiveSync = false;
+bool sharingActive     = false; // Standby on boot; starts sharing ONLY when Button 1 is pressed
+bool pendingActiveSync = true;  // Syncs 'false' to Firebase on boot
 bool wasWifiConnected  = false;
 bool lcdFound          = false;
 bool mpuReady          = false;
@@ -341,6 +341,7 @@ void updateWifi(uint32_t now) {
 
   if (currentConnected && !wasWifiConnected) {
     pendingActiveSync = true;
+    lcdConfirmation("WiFi CONNECTED", "Online");
   }
   wasWifiConnected = currentConnected;
 }
@@ -517,6 +518,10 @@ void refreshLcd(uint32_t now) {
   showLogMessage = false;
   if (now - pageSince >= PAGE_TIME_MS) {
     page = static_cast<Page>((page + 1) % PAGE_COUNT);
+    // If Wi-Fi is connected, skip WIFI_STATUS page (only cycle when connection is NOT there)
+    if (page == WIFI_STATUS && WiFi.status() == WL_CONNECTED) {
+      page = static_cast<Page>((page + 1) % PAGE_COUNT);
+    }
     pageSince = now;
   }
 
@@ -530,14 +535,8 @@ void refreshLcd(uint32_t now) {
       break;
 
     case WIFI_STATUS:
-      if (WiFi.status() == WL_CONNECTED) {
-        IPAddress ip = WiFi.localIP();
-        snprintf(top, sizeof(top), "WiFi CONNECTED");
-        snprintf(bottom, sizeof(bottom), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-      } else {
-        snprintf(top, sizeof(top), "WiFi CONNECTING");
-        snprintf(bottom, sizeof(bottom), "Check ZTE 2.4G");
-      }
+      snprintf(top, sizeof(top), "WiFi SEARCHING");
+      snprintf(bottom, sizeof(bottom), "Check 2.4G ZTE");
       break;
 
     case GPS_STATUS:
@@ -847,7 +846,7 @@ void setup() {
     showSdResult({false, "", "Logger offline"});
   }
 
-  digitalWrite(LED_GREEN, HIGH);
+  digitalWrite(LED_RED, HIGH); // Red standby LED on boot
   showPage(LCD_INFO);
   lastLogAt = pageSince;
   refreshLcd(pageSince);
