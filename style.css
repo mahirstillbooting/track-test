@@ -763,7 +763,8 @@ html, body {
     font-size: 1.35rem;
   }
 
-  .accel-chip {
+  .accel-chip,
+  .coord-chip {
     padding: 5px 6px;
   }
 
@@ -1123,6 +1124,53 @@ html, body {
   font-weight: 700;
   font-family: monospace;
   color: var(--gm-text-primary);
+}
+
+/* Live GPS Coordinates Chips (Consistent with MPU Chips) */
+.metric-label-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metric-svg-icon {
+  color: var(--gm-accent);
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.coords-chips-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.coord-chip {
+  background: var(--gm-bg-surface);
+  border: 1px solid var(--gm-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.coord-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.coord-icon {
+  color: var(--gm-accent);
+  opacity: 0.85;
+}
+
+.pill-agps {
+  background: rgba(255, 183, 77, 0.2);
+  color: #ffb74d;
+  border: 1px solid rgba(255, 183, 77, 0.4);
 }
 
 /* ==========================================================================

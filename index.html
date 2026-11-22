@@ -246,6 +246,42 @@
                 </div>
               </div>
             </div>
+
+            <!-- Live GPS Coordinates Card (Latitude & Longitude) -->
+            <div class="gm-metric-card full-span coords-card">
+              <div class="metric-top-label">
+                <div class="metric-label-with-icon">
+                  <svg class="metric-svg-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/>
+                    <circle cx="12" cy="10" r="2.5"/>
+                  </svg>
+                  <span>GPS COORDINATES</span>
+                </div>
+                <span class="pill-calc" id="coordsSourcePill">GPS</span>
+              </div>
+              <div class="coords-chips-row">
+                <div class="coord-chip">
+                  <div class="coord-meta">
+                    <svg class="coord-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                      <circle cx="12" cy="12" r="9"/>
+                      <line x1="3" y1="12" x2="21" y2="12"/>
+                    </svg>
+                    <span class="chip-axis">LAT</span>
+                  </div>
+                  <span id="coordLatVal" class="chip-val">23.718382°</span>
+                </div>
+                <div class="coord-chip">
+                  <div class="coord-meta">
+                    <svg class="coord-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                      <circle cx="12" cy="12" r="9"/>
+                      <path d="M12 3a14 14 0 0 1 3.5 9 14 14 0 0 1-3.5 9 14 14 0 0 1-3.5-9 14 14 0 0 1 3.5-9z"/>
+                    </svg>
+                    <span class="chip-axis">LNG</span>
+                  </div>
+                  <span id="coordLngVal" class="chip-val">90.384001°</span>
+                </div>
+              </div>
+            </div>
           </div>
 
         </div>

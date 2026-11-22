@@ -440,6 +440,22 @@ function setupFirebaseListeners() {
       document.getElementById('telemLat').textContent = lat.toFixed(6);
       document.getElementById('telemLng').textContent = lng.toFixed(6);
 
+      const latEl = document.getElementById('coordLatVal');
+      const lngEl = document.getElementById('coordLngVal');
+      if (latEl) latEl.textContent = lat.toFixed(6) + '°';
+      if (lngEl) lngEl.textContent = lng.toFixed(6) + '°';
+
+      const pill = document.getElementById('coordsSourcePill');
+      if (pill) {
+        if (data.assisted) {
+          pill.textContent = 'A-GPS';
+          pill.classList.add('pill-agps');
+        } else {
+          pill.textContent = sats >= 4 ? '3D FIX' : 'GPS';
+          pill.classList.remove('pill-agps');
+        }
+      }
+
       // Animate Marker Smoothly
       animateMarker(lat, lng);
 
