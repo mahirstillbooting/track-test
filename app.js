@@ -70,9 +70,22 @@ let tripsHistoryCache = {};
 // =============================================================================
 // LEAFLET MAP INITIALIZATION (High-Detail Texture Layers Retained)
 // =============================================================================
+let isAutoCenteringEnabled = true;
+
 function initMainMap() {
-  const defaultLat = 23.7186;
-  const defaultLng = 90.3837;
+  // Check if we have last tested coordinates saved in localStorage to avoid sticking to Lalbagh
+  let defaultLat = 23.7684; // Default to East West University / Aftabnagar area
+  let defaultLng = 90.4265;
+  try {
+    const cached = localStorage.getItem('chalok_last_known_coords');
+    if (cached) {
+      const p = JSON.parse(cached);
+      if (p.lat && p.lng && !isNaN(p.lat) && !isNaN(p.lng)) {
+        defaultLat = p.lat;
+        defaultLng = p.lng;
+      }
+    }
+  } catch (e) {}
 
   map = L.map('map', {
     zoomControl: false,
@@ -129,11 +142,23 @@ function initMainMap() {
   trackerMarker = L.marker([defaultLat, defaultLng], { icon: trackerIcon }).addTo(map);
   trackerMarker.bindPopup('<b>CHALOK Vehicle</b><br>Standby position');
 
-  // Recenter button listener
-  document.getElementById('btnRecenter').addEventListener('click', () => {
-    if (lastCoords.lat !== null && lastCoords.lng !== null) {
-      map.flyTo([lastCoords.lat, lastCoords.lng], 17, { duration: 0.8 });
-    }
+  // Recenter button listener with active state toggle
+  const btnRecenter = document.getElementById('btnRecenter');
+  if (btnRecenter) {
+    btnRecenter.classList.add('active'); // active by default on load
+    btnRecenter.addEventListener('click', () => {
+      isAutoCenteringEnabled = true;
+      btnRecenter.classList.add('active');
+      if (lastCoords.lat !== null && lastCoords.lng !== null) {
+        map.flyTo([lastCoords.lat, lastCoords.lng], 17, { duration: 0.8 });
+      }
+    });
+  }
+
+  // Detect when user manually explores the map -> pause auto-follow
+  map.on('dragstart', () => {
+    isAutoCenteringEnabled = false;
+    if (btnRecenter) btnRecenter.classList.remove('active');
   });
 
   // Multiple staged size invalidations to ensure full rendering on phones
@@ -327,10 +352,6 @@ function animateMarker(newLat, newLng) {
   if (lastCoords.lat === null || lastCoords.lng === null) {
     lastCoords = { lat: newLat, lng: newLng };
     trackerMarker.setLatLng([newLat, newLng]);
-    if (!hasReceivedFirstFix) {
-      map.setView([newLat, newLng], 16);
-      hasReceivedFirstFix = true;
-    }
     return;
   }
 
@@ -375,11 +396,6 @@ function animateMarker(newLat, newLng) {
   }
 
   animationFrameId = requestAnimationFrame(step);
-
-  if (!hasReceivedFirstFix) {
-    map.setView([newLat, newLng], 16);
-    hasReceivedFirstFix = true;
-  }
 }
 
 // =============================================================================
@@ -561,6 +577,28 @@ function setupFirebaseListeners() {
 
       // Animate Marker Smoothly (Continuous non-stuttering interpolation)
       animateMarker(sLat, sLng);
+
+      // Save to localStorage so future page visits immediately open at the real location
+      try {
+        localStorage.setItem('chalok_last_known_coords', JSON.stringify({ lat: sLat, lng: sLng }));
+      } catch (e) {}
+
+      // Intelligent Reactive Map Centering:
+      // If first fix received, OR if device relocated significantly (> 250m away from current map view)
+      if (map) {
+        const curCenter = map.getCenter();
+        const distFromCenter = calcDistanceMeters(curCenter.lat, curCenter.lng, sLat, sLng);
+
+        if (!hasReceivedFirstFix || distFromCenter > 250) {
+          map.flyTo([sLat, sLng], 17, { duration: hasReceivedFirstFix ? 1.2 : 0.6 });
+          hasReceivedFirstFix = true;
+          isAutoCenteringEnabled = true;
+          const btnRecenter = document.getElementById('btnRecenter');
+          if (btnRecenter) btnRecenter.classList.add('active');
+        } else if (isAutoCenteringEnabled) {
+          map.panTo([sLat, sLng], { animate: true, duration: 0.6 });
+        }
+      }
 
       // Calculate speed dynamically from coordinates movement
       updateCalculatedSpeed(sLat, sLng);
@@ -1128,14 +1166,57 @@ function setupNavigation() {
 }
 
 // =============================================================================
-// RIDER VS ADMIN MODE SWITCHER
+// RIDER VS ADMIN MODE SWITCHER (TACTILE MICRO-ANIMATIONS)
 // =============================================================================
-function setAppMode(mode) {
+let modeToastTimeout = null;
+
+function showModeSwitchToast(mode) {
+  const toast = document.getElementById('modeSwitchToast');
+  const iconWrap = document.getElementById('modeToastIcon');
+  const textEl = document.getElementById('modeToastText');
+  if (!toast || !iconWrap || !textEl) return;
+
+  if (modeToastTimeout) clearTimeout(modeToastTimeout);
+
+  toast.classList.remove('hidden', 'dismissing');
+
+  if (mode === 'admin') {
+    toast.classList.add('admin-active');
+    iconWrap.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+        <path d="m9 12 2 2 4-4"></path>
+      </svg>
+    `;
+    textEl.textContent = 'Admin Mode Active (Journey Controls)';
+  } else {
+    toast.classList.remove('admin-active');
+    iconWrap.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+        <circle cx="12" cy="7" r="4"></circle>
+      </svg>
+    `;
+    textEl.textContent = 'Rider Mode Active (Live Telemetry)';
+  }
+
+  modeToastTimeout = setTimeout(() => {
+    toast.classList.add('dismissing');
+    setTimeout(() => {
+      toast.classList.add('hidden');
+      toast.classList.remove('dismissing');
+    }, 350);
+  }, 2200);
+}
+
+function setAppMode(mode, triggeredByUser = false) {
   currentMode = mode;
   const btnRider = document.getElementById('btnRiderMode');
   const btnAdmin = document.getElementById('btnAdminMode');
   const btnMobile = document.getElementById('btnMobileModeToggle');
   const mobileLabel = document.getElementById('mobileModeLabel');
+  const mobileIconWrap = document.getElementById('mobileModeIconWrap');
+  const badgePulse = document.getElementById('mobileModeBadgePulse');
 
   if (btnRider && btnAdmin) {
     btnRider.classList.toggle('active', mode === 'rider');
@@ -1146,11 +1227,41 @@ function setAppMode(mode) {
     btnMobile.classList.toggle('active', mode === 'admin');
   }
 
+  if (badgePulse) {
+    badgePulse.classList.toggle('hidden', mode !== 'admin');
+  }
+
   if (mobileLabel) {
     mobileLabel.textContent = mode === 'admin' ? 'Admin' : 'Rider';
   }
 
+  if (mobileIconWrap) {
+    mobileIconWrap.classList.remove('flip-effect');
+    void mobileIconWrap.offsetWidth; // trigger reflow for smooth animation
+    mobileIconWrap.classList.add('flip-effect');
+
+    if (mode === 'admin') {
+      mobileIconWrap.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          <path d="m9 12 2 2 4-4"></path>
+        </svg>
+      `;
+    } else {
+      mobileIconWrap.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+      `;
+    }
+  }
+
   updateAdminRecordingUI();
+
+  if (triggeredByUser) {
+    showModeSwitchToast(mode);
+  }
 }
 
 function setupModeSwitcher() {
@@ -1159,16 +1270,16 @@ function setupModeSwitcher() {
   const btnMobile = document.getElementById('btnMobileModeToggle');
 
   if (btnRider) {
-    btnRider.addEventListener('click', () => setAppMode('rider'));
+    btnRider.addEventListener('click', () => setAppMode('rider', true));
   }
 
   if (btnAdmin) {
-    btnAdmin.addEventListener('click', () => setAppMode('admin'));
+    btnAdmin.addEventListener('click', () => setAppMode('admin', true));
   }
 
   if (btnMobile) {
     btnMobile.addEventListener('click', () => {
-      setAppMode(currentMode === 'rider' ? 'admin' : 'rider');
+      setAppMode(currentMode === 'rider' ? 'admin' : 'rider', true);
     });
   }
 }

@@ -266,6 +266,149 @@ html, body {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
+/* Floating Mode Switch Toast Notification */
+.mode-switch-toast {
+  position: fixed;
+  top: 68px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  z-index: 9999;
+  pointer-events: none;
+  animation: toastSlideBounce 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.mode-switch-toast.hidden {
+  display: none !important;
+}
+
+.mode-switch-toast.dismissing {
+  animation: toastSlideOut 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.toast-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(168, 199, 250, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 16px rgba(168, 199, 250, 0.25);
+  transition: all 0.3s ease;
+}
+
+.toast-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--gm-accent-bg);
+  color: var(--gm-accent);
+}
+
+.mode-switch-toast.admin-active .toast-icon-wrap {
+  background: rgba(255, 183, 77, 0.25);
+  color: #ffb74d;
+}
+
+.mode-switch-toast.admin-active .toast-content {
+  border-color: rgba(255, 183, 77, 0.55);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 20px rgba(255, 183, 77, 0.35);
+}
+
+.toast-text {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--gm-text-primary);
+}
+
+@keyframes toastSlideBounce {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-22px) scale(0.88);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes toastSlideOut {
+  0% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-16px) scale(0.92);
+  }
+}
+
+/* Mobile Mode Switcher Tactile FX */
+.mobile-mode-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.mobile-mode-icon-wrap.flip-effect {
+  animation: modeIconFlip 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modeIconFlip {
+  0% {
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    transform: scale(0.6) rotate(180deg);
+  }
+  100% {
+    transform: scale(1) rotate(360deg);
+  }
+}
+
+#btnMobileModeToggle {
+  position: relative;
+}
+
+#btnMobileModeToggle.active {
+  color: #ffb74d !important;
+}
+
+#btnMobileModeToggle.active .mobile-mode-icon-wrap {
+  color: #ffb74d;
+  filter: drop-shadow(0 0 8px rgba(255, 183, 77, 0.7));
+}
+
+.mobile-mode-badge {
+  position: absolute;
+  top: 6px;
+  right: calc(50% - 13px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffb74d;
+  box-shadow: 0 0 8px #ffb74d;
+  animation: adminBadgePulse 1.8s infinite ease-out;
+}
+
+.mobile-mode-badge.hidden {
+  display: none !important;
+}
+
+@keyframes adminBadgePulse {
+  0% { transform: scale(0.8); opacity: 0.95; }
+  50% { transform: scale(1.4); opacity: 0.45; }
+  100% { transform: scale(0.8); opacity: 0.95; }
+}
+
 /* ==========================================================================
    VIEWPORT & MAIN CONTAINER
    ========================================================================== */
@@ -448,6 +591,13 @@ html, body {
   background: var(--gm-bg-hover);
   border-color: var(--gm-accent);
   color: var(--gm-accent-text);
+}
+
+.floating-recenter-btn.active {
+  background: rgba(168, 199, 250, 0.18);
+  border-color: var(--gm-accent);
+  color: var(--gm-accent);
+  box-shadow: 0 0 12px rgba(168, 199, 250, 0.35);
 }
 
 /* Ride Controls Panel (Desktop Sidebar & Mobile Bottom Sheet) */
@@ -818,6 +968,18 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  animation: adminPanelReveal 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes adminPanelReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .admin-trip-controls.hidden {
