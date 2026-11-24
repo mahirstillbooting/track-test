@@ -2041,6 +2041,74 @@ html, body {
 /* ==========================================================================
    CUSTOM MAP MARKER & LEAFLET DARK CONTROLS
    ========================================================================== */
+/* ==========================================================================
+   CUSTOM MAP PIN MARKER (LUCIDE MAP-PIN ENGINE)
+   ========================================================================== */
+.custom-tracker-pin-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  position: relative;
+  pointer-events: auto;
+}
+
+.pin-container {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 10px rgba(168, 199, 250, 0.55));
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.pin-container:hover {
+  transform: scale(1.15) translateY(-2px);
+}
+
+.chalok-pin-svg {
+  color: #a8c7fa;
+  fill: #041c2c;
+  stroke: #ffffff;
+  stroke-width: 2.2;
+}
+
+.chalok-pin-svg circle {
+  fill: #a8c7fa;
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+/* Pulsing radar halo at the ground contact point */
+.pin-pulse-halo {
+  position: absolute;
+  bottom: 0px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 12px;
+  background: radial-gradient(ellipse at center, rgba(168, 199, 250, 0.75) 0%, rgba(168, 199, 250, 0) 75%);
+  border-radius: 50%;
+  z-index: 1;
+  animation: pulsePinGround 2s infinite ease-out;
+}
+
+@keyframes pulsePinGround {
+  0% {
+    transform: translateX(-50%) scale(0.6);
+    opacity: 0.95;
+  }
+  70% {
+    transform: translateX(-50%) scale(2.4);
+    opacity: 0.15;
+  }
+  100% {
+    transform: translateX(-50%) scale(3.2);
+    opacity: 0;
+  }
+}
+
 .custom-tracker-marker {
   display: flex;
   align-items: center;

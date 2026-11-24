@@ -109,19 +109,21 @@ function initMainMap() {
   };
   L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
 
-  // Custom DivIcon for Vehicle Marker (Using GM Accent / No Green)
+  // Custom DivIcon for Vehicle Marker using Lucide Map-Pin SVG
   const trackerIcon = L.divIcon({
-    className: 'custom-tracker-marker',
+    className: 'custom-tracker-pin-marker',
     html: `
-      <div class="marker-pulse"></div>
-      <div class="marker-core">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <polygon points="12 2 19 21 12 17 5 21 12 2"></polygon>
+      <div class="pin-pulse-halo"></div>
+      <div class="pin-container">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-map-pin chalok-pin-svg">
+          <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/>
+          <circle cx="12" cy="10" r="3"/>
         </svg>
       </div>
     `,
-    iconSize: [38, 38],
-    iconAnchor: [19, 19]
+    iconSize: [32, 40],
+    iconAnchor: [16, 36],
+    popupAnchor: [0, -36]
   });
 
   trackerMarker = L.marker([defaultLat, defaultLng], { icon: trackerIcon }).addTo(map);
@@ -237,7 +239,89 @@ function renderSpeedUI(speed) {
 }
 
 // =============================================================================
-// SMOOTH MARKER ANIMATION
+// KINEMATIC POSITION FILTER & MULTIPATH ANTI-BOUNCE ENGINE
+// =============================================================================
+// Filters urban canyon GPS reflections (satellite bouncing from building walls)
+// without street-snapping, preserving off-road, field, and terrace paths.
+let filteredPos = { lat: null, lng: null };
+let lastFilterPacketTime = null;
+let lastMarkerPacketTime = null;
+
+function applyKinematicFilter(rawLat, rawLng, sats = 0) {
+  const now = performance.now();
+
+  // First reading: initialize filter directly
+  if (filteredPos.lat === null || filteredPos.lng === null) {
+    filteredPos = { lat: rawLat, lng: rawLng };
+    lastFilterPacketTime = now;
+    return { lat: rawLat, lng: rawLng };
+  }
+
+  const dtSec = lastFilterPacketTime ? Math.max((now - lastFilterPacketTime) / 1000, 0.5) : 3.0;
+  lastFilterPacketTime = now;
+
+  const rawDistMeters = calcDistanceMeters(filteredPos.lat, filteredPos.lng, rawLat, rawLng);
+  const rawSpeedKmh = (rawDistMeters / dtSec) * 3.6;
+
+  // 1. Stationary Deadband Suppression:
+  // When testing on hand or stopping at a terrace/hostel gate, GPS multipath jitter
+  // causes 2-4 meter random squiggles into building walls. Clamp to stationary.
+  if (rawDistMeters < 2.0) {
+    return { lat: filteredPos.lat, lng: filteredPos.lng };
+  }
+
+  // 2. Outlier Teleport Jump Rejection (Multipath Wall Reflection):
+  // When walking or e-rickshaw riding, sudden jumps > 35m in 3s (> 42 km/h) are reflections
+  if (rawSpeedKmh > 55.0) {
+    // Heavily damp the teleport jump by clamping max displacement
+    const maxAllowedDist = 12.0 * dtSec; // max ~43 km/h
+    const ratio = maxAllowedDist / rawDistMeters;
+    rawLat = filteredPos.lat + (rawLat - filteredPos.lat) * ratio;
+    rawLng = filteredPos.lng + (rawLng - filteredPos.lng) * ratio;
+  }
+
+  // 3. Adaptive Exponential Smoothing (EMA):
+  // If satellite count is low (poor PDOP / heavy urban canyon), smooth more aggressively.
+  // If moving briskly with high satellite count, follow more responsively.
+  let alpha = 0.55;
+  if (sats >= 8 && rawSpeedKmh > 8.0) {
+    alpha = 0.75; // Confident movement: follow responsive trajectory
+  } else if (rawSpeedKmh < 4.0 || sats < 5) {
+    alpha = 0.38; // Walking / multipath canyon: heavier smoothing against lateral wall bounces
+  }
+
+  filteredPos.lat = filteredPos.lat + alpha * (rawLat - filteredPos.lat);
+  filteredPos.lng = filteredPos.lng + alpha * (rawLng - filteredPos.lng);
+
+  return { lat: filteredPos.lat, lng: filteredPos.lng };
+}
+
+// Chaikin's Corner-Cutting Spline Smoothing Algorithm
+// Turns jagged polygonal GPS line segments into smooth organic trajectories
+function chaikinSmooth(points, iterations = 1) {
+  if (!points || points.length <= 2) return points;
+  let smoothed = points;
+  for (let it = 0; it < iterations; it++) {
+    const next = [];
+    next.push(smoothed[0]); // Preserve start point exactly
+    for (let i = 0; i < smoothed.length - 1; i++) {
+      const p0 = smoothed[i];
+      const p1 = smoothed[i + 1];
+      // Q = 0.75 * p0 + 0.25 * p1
+      const q = [0.75 * p0[0] + 0.25 * p1[0], 0.75 * p0[1] + 0.25 * p1[1]];
+      // R = 0.25 * p0 + 0.75 * p1
+      const r = [0.25 * p0[0] + 0.75 * p1[0], 0.25 * p0[1] + 0.75 * p1[1]];
+      next.push(q);
+      next.push(r);
+    }
+    next.push(smoothed[smoothed.length - 1]); // Preserve end point exactly
+    smoothed = next;
+  }
+  return smoothed;
+}
+
+// =============================================================================
+// CONTINUOUS FLUID MARKER ANIMATION (ZERO STUTTER ENGINE)
 // =============================================================================
 function animateMarker(newLat, newLng) {
   if (lastCoords.lat === null || lastCoords.lng === null) {
@@ -251,18 +335,32 @@ function animateMarker(newLat, newLng) {
   }
 
   const dist = calcDistanceMeters(lastCoords.lat, lastCoords.lng, newLat, newLng);
-  if (dist < 2.0) return; // Keep marker rock solid if under 2m drift
+  if (dist < 0.8) return; // Microscopic threshold
+
+  const now = performance.now();
+  let packetInterval = 3000;
+  if (lastMarkerPacketTime !== null) {
+    const dt = now - lastMarkerPacketTime;
+    if (dt >= 800 && dt <= 8000) {
+      packetInterval = dt;
+    }
+  }
+  lastMarkerPacketTime = now;
+
+  // Fluid duration matches the actual telemetry cycle (e.g. 2600ms for 3s gap)
+  // Completely eliminates the 800ms jump + 2.2s dead freeze stutter!
+  const duration = Math.min(Math.max(packetInterval * 0.90, 1000), 4500);
 
   const startLat = lastCoords.lat;
   const startLng = lastCoords.lng;
   const startTime = performance.now();
-  const duration = 800; // ms
 
   if (animationFrameId) cancelAnimationFrame(animationFrameId);
 
   function step(time) {
     const progress = Math.min((time - startTime) / duration, 1);
-    const ease = 1 - Math.pow(1 - progress, 2); // Quad ease-out
+    // Smooth cubic ease-out
+    const ease = 1 - Math.pow(1 - progress, 3);
 
     const curLat = startLat + (newLat - startLat) * ease;
     const curLng = startLng + (newLng - startLng) * ease;
@@ -437,13 +535,18 @@ function setupFirebaseListeners() {
 
     // Coordinates
     if (!isNaN(lat) && !isNaN(lng)) {
-      document.getElementById('telemLat').textContent = lat.toFixed(6);
-      document.getElementById('telemLng').textContent = lng.toFixed(6);
+      // Pass through Kinematic Filter (cancels multipath wall bounces)
+      const smoothed = applyKinematicFilter(lat, lng, sats);
+      const sLat = smoothed.lat;
+      const sLng = smoothed.lng;
+
+      document.getElementById('telemLat').textContent = sLat.toFixed(6);
+      document.getElementById('telemLng').textContent = sLng.toFixed(6);
 
       const latEl = document.getElementById('coordLatVal');
       const lngEl = document.getElementById('coordLngVal');
-      if (latEl) latEl.textContent = lat.toFixed(6) + '°';
-      if (lngEl) lngEl.textContent = lng.toFixed(6) + '°';
+      if (latEl) latEl.textContent = sLat.toFixed(6) + '°';
+      if (lngEl) lngEl.textContent = sLng.toFixed(6) + '°';
 
       const pill = document.getElementById('coordsSourcePill');
       if (pill) {
@@ -456,15 +559,15 @@ function setupFirebaseListeners() {
         }
       }
 
-      // Animate Marker Smoothly
-      animateMarker(lat, lng);
+      // Animate Marker Smoothly (Continuous non-stuttering interpolation)
+      animateMarker(sLat, sLng);
 
       // Calculate speed dynamically from coordinates movement
-      updateCalculatedSpeed(lat, lng);
+      updateCalculatedSpeed(sLat, sLng);
 
       // If Admin has started recording journey, append point
       if (isRecordingTrip) {
-        handleTripPointRecording(lat, lng);
+        handleTripPointRecording(sLat, sLng);
       }
     }
   });
@@ -528,8 +631,8 @@ function handleTripPointRecording(lat, lng) {
     lng
   );
 
-  // Record point if moved >= 2.0 meters
-  if (distMeters >= 2.0) {
+  // Record point if moved >= 2.2 meters (ignores stationary jitter knots)
+  if (distMeters >= 2.2) {
     tripSession.totalDistMeters += distMeters;
     tripSession.lastRecordedCoord = { lat, lng };
     tripSession.points.push({ lat, lng, timestamp: Date.now(), speed: currentSpeedKmh });
@@ -544,9 +647,11 @@ function handleTripPointRecording(lat, lng) {
 }
 
 function updateActivePolyline() {
-  const latLngs = tripSession.points.map(p => [p.lat, p.lng]);
+  const rawLatLngs = tripSession.points.map(p => [p.lat, p.lng]);
+  // Apply Chaikin corner-cutting spline smoothing to eliminate jagged building edges
+  const smoothedLatLngs = chaikinSmooth(rawLatLngs, 1);
   if (!activeRecordingPolyline) {
-    activeRecordingPolyline = L.polyline(latLngs, {
+    activeRecordingPolyline = L.polyline(smoothedLatLngs, {
       color: '#5e35b1', // Dark purple for high contrast route plotting
       weight: 5,
       opacity: 0.95,
@@ -554,7 +659,7 @@ function updateActivePolyline() {
       lineJoin: 'round'
     }).addTo(map);
   } else {
-    activeRecordingPolyline.setLatLngs(latLngs);
+    activeRecordingPolyline.setLatLngs(smoothedLatLngs);
   }
 }
 
@@ -914,9 +1019,12 @@ function openTripModal(tripKey, trip) {
       .map(p => [parseFloat(p.lat), parseFloat(p.lng)]);
 
     if (coords.length > 0) {
+      // Apply Chaikin corner-cutting spline smoothing to historical replay paths
+      const smoothedCoords = chaikinSmooth(coords, 1);
+
       // Google Maps style clean minimal route plot
       // Outer casing for high contrast against street map tiles
-      modalCasing = L.polyline(coords, {
+      modalCasing = L.polyline(smoothedCoords, {
         color: 'rgba(20, 10, 35, 0.85)',
         weight: 8,
         opacity: 0.85,
@@ -925,7 +1033,7 @@ function openTripModal(tripKey, trip) {
       }).addTo(m);
 
       // Core route polyline in dark purple #5e35b1
-      modalPolyline = L.polyline(coords, {
+      modalPolyline = L.polyline(smoothedCoords, {
         color: '#5e35b1',
         weight: 5,
         opacity: 1.0,
@@ -934,7 +1042,7 @@ function openTripModal(tripKey, trip) {
       }).addTo(m);
 
       // Start pin (dark purple circle)
-      modalStartMarker = L.circleMarker(coords[0], {
+      modalStartMarker = L.circleMarker(smoothedCoords[0], {
         radius: 7,
         color: '#ffffff',
         fillColor: '#5e35b1',
@@ -943,7 +1051,7 @@ function openTripModal(tripKey, trip) {
       }).addTo(m).bindPopup(`<b>Pickup:</b> ${originName}`);
 
       // End pin (sparkle coral circle)
-      modalEndMarker = L.circleMarker(coords[coords.length - 1], {
+      modalEndMarker = L.circleMarker(smoothedCoords[smoothedCoords.length - 1], {
         radius: 7,
         color: '#ffffff',
         fillColor: '#d96570',
