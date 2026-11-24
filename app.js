@@ -549,6 +549,16 @@ function setupFirebaseListeners() {
     document.getElementById('barAy').style.width = `${pctY}%`;
     document.getElementById('barAz').style.width = `${pctZ}%`;
 
+    // Stream live to Kinematics Motion Lab HUD & Data Logger
+    if (typeof updateKinematicsTelemetry === 'function') {
+      updateKinematicsTelemetry({
+        ax, ay, az, tilt, roll, pitch,
+        speed: currentSpeedKmh,
+        timestamp: data.timestamp || Date.now(),
+        deviceMillis: data.deviceMillis || 0
+      });
+    }
+
     // Coordinates
     if (!isNaN(lat) && !isNaN(lng)) {
       // Pass through Kinematic Filter (cancels multipath wall bounces)
@@ -1285,6 +1295,869 @@ function setupModeSwitcher() {
 }
 
 // =============================================================================
+// KINEMATIC MOTION LAB & 6-DOF TELEMETRY LOGGER ENGINE
+// =============================================================================
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+const KINEMATIC_MANEUVERS = {
+  speed_breaker: {
+    key: 'speed_breaker',
+    name: 'Speed Breaker',
+    title: 'Speed Breaker Detection Lab',
+    tag: 'VERTICAL PITCH TRANSIENT (+PITCH → CREST → -PITCH)',
+    desc: 'Simulate driving over an elevated speed breaker or road hump. Move device forward while tilting the front wheel upward, leveling briefly at the peak, then pitching down as rear clears.',
+    guideSteps: [
+      { step: '1. Approach:', desc: 'Level forward motion (Pitch ~0°)' },
+      { step: '2. Climb:', desc: 'Nose pitches upward (+15° to +35°)' },
+      { step: '3. Crest & Descend:', desc: 'Level crest (~0°), then pitch down (-15° to -30°)' }
+    ],
+    primaryMetric: 'Pitch (°)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.0°';
+      let maxPitch = -Infinity, minPitch = Infinity;
+      samples.forEach(s => {
+        if (s.pitch > maxPitch) maxPitch = s.pitch;
+        if (s.pitch < minPitch) minPitch = s.pitch;
+      });
+      return `Peak: ${maxPitch > -Infinity ? (maxPitch >= 0 ? '+' : '') + maxPitch.toFixed(1) : '0.0'}° / Min: ${minPitch < Infinity ? (minPitch >= 0 ? '+' : '') + minPitch.toFixed(1) : '0.0'}°`;
+    },
+    classifySample: (sample) => {
+      if (sample.pitch >= 12.0) return { text: 'FRONT_RISE', cls: 'tag-pitch-up' };
+      if (sample.pitch <= -12.0) return { text: 'REAR_DESCENT', cls: 'tag-pitch-down' };
+      if (Math.abs(sample.pitch) < 6.0 && (Math.abs(sample.ax - 1.0) > 0.18 || Math.abs(sample.az) > 0.12)) {
+        return { text: 'CREST_LEVEL', cls: 'tag-steady' };
+      }
+      return { text: 'APPROACH_LEVEL', cls: 'tag-steady' };
+    }
+  },
+  pothole: {
+    key: 'pothole',
+    name: 'Pothole / Dip',
+    title: 'Pothole & Road Cavity Detection Lab',
+    tag: 'VERTICAL ACCELERATION TRANSIENT (DROP → REBOUND SHOCK)',
+    desc: 'Simulate hitting a road depression or pothole: sudden vertical acceleration plunge (Ax drops towards 0g) followed by sharp rebound upward impact shock (> 1.35g).',
+    guideSteps: [
+      { step: '1. Steady Ride:', desc: 'Normal 1.0g vertical baseline' },
+      { step: '2. Cavity Drop:', desc: 'Sudden plunge downwards (Ax drops towards 0g)' },
+      { step: '3. Rebound Shock:', desc: 'Sharp upward impact rebound (Ax spikes > 1.35g)' }
+    ],
+    primaryMetric: 'Ax Impact (g)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.00g';
+      let maxAx = -Infinity, minAx = Infinity;
+      samples.forEach(s => {
+        if (s.ax > maxAx) maxAx = s.ax;
+        if (s.ax < minAx) minAx = s.ax;
+      });
+      return `Rebound: +${maxAx > -Infinity ? maxAx.toFixed(2) : '0.00'}g / Drop: ${minAx < Infinity ? minAx.toFixed(2) : '0.00'}g`;
+    },
+    classifySample: (sample) => {
+      if (sample.ax <= 0.70) return { text: 'CAVITY_PLUNGE', cls: 'tag-pitch-down' };
+      if (sample.ax >= 1.35) return { text: 'REBOUND_SHOCK', cls: 'tag-heave' };
+      return { text: 'ROAD_BASELINE', cls: 'tag-steady' };
+    }
+  },
+  forward: {
+    key: 'forward',
+    name: 'Forward Move',
+    title: 'Forward Linear Acceleration Lab',
+    tag: 'LONGITUDINAL TRANSLATION (+AZ SURGE)',
+    desc: 'Move device straight ahead along its longitudinal axis to calibrate forward acceleration (Az) thresholds and identify cruising velocity.',
+    guideSteps: [
+      { step: '1. Neutral Rest:', desc: 'Stationary baseline (Az ~ 0.0g)' },
+      { step: '2. Forward Surge:', desc: 'Smooth thrust forward along heading (+Az > 0.18g)' },
+      { step: '3. Cruise / Coast:', desc: 'Constant velocity coasting' }
+    ],
+    primaryMetric: 'Az Thrust (g)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.00g';
+      let maxAz = -Infinity;
+      samples.forEach(s => { if (s.az > maxAz) maxAz = s.az; });
+      return `Max Thrust: +${maxAz > -Infinity ? maxAz.toFixed(2) : '0.00'}g`;
+    },
+    classifySample: (sample) => {
+      if (sample.az >= 0.20) return { text: 'FORWARD_SURGE', cls: 'tag-speed' };
+      if (sample.az <= -0.15) return { text: 'COAST_DECEL', cls: 'tag-pitch-down' };
+      return { text: 'STEADY_CRUISE', cls: 'tag-steady' };
+    }
+  },
+  backward: {
+    key: 'backward',
+    name: 'Backward Move',
+    title: 'Backward / Reverse Movement Lab',
+    tag: 'REVERSE TRANSLATION (-AZ PULL)',
+    desc: 'Move device straight backward along its longitudinal axis to calibrate reverse motion indicators and negative longitudinal acceleration.',
+    guideSteps: [
+      { step: '1. Neutral Rest:', desc: 'Stationary baseline (Az ~ 0.0g)' },
+      { step: '2. Reverse Pull:', desc: 'Smooth pull backwards (-Az < -0.18g)' },
+      { step: '3. Stop Halt:', desc: 'Stop motion and bring to rest' }
+    ],
+    primaryMetric: 'Az Reverse (g)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.00g';
+      let minAz = Infinity;
+      samples.forEach(s => { if (s.az < minAz) minAz = s.az; });
+      return `Min Az: ${minAz < Infinity ? minAz.toFixed(2) : '0.00'}g`;
+    },
+    classifySample: (sample) => {
+      if (sample.az <= -0.18) return { text: 'REVERSE_PULL', cls: 'tag-lateral' };
+      if (sample.az >= 0.18) return { text: 'BRAKE_HALT', cls: 'tag-brake' };
+      return { text: 'NEUTRAL_REST', cls: 'tag-steady' };
+    }
+  },
+  right_turn: {
+    key: 'right_turn',
+    name: 'Right Turn',
+    title: 'Right Turn & Banking Lab',
+    tag: 'LATERAL CENTRIPETAL & ROLL (+ROLL, +AY)',
+    desc: 'Move forward while rotating and banking clockwise to the right. Calibrate centripetal lateral g-force (+Ay) and positive lean angle (+Roll).',
+    guideSteps: [
+      { step: '1. Turn Entry:', desc: 'Straight approach (Roll ~0°, Ay ~0.0g)' },
+      { step: '2. Right Apex:', desc: 'Clockwise bank to right (+Roll > 12°, +Ay > 0.20g)' },
+      { step: '3. Exit / Upright:', desc: 'Return upright to straight path' }
+    ],
+    primaryMetric: 'Peak Bank (+Roll)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.0°';
+      let maxRoll = -Infinity, maxAy = -Infinity;
+      samples.forEach(s => {
+        if (s.roll > maxRoll) maxRoll = s.roll;
+        if (s.ay > maxAy) maxAy = s.ay;
+      });
+      return `Roll: +${maxRoll > -Infinity ? maxRoll.toFixed(1) : '0.0'}° / Ay: +${maxAy > -Infinity ? maxAy.toFixed(2) : '0.00'}g`;
+    },
+    classifySample: (sample) => {
+      if (sample.roll >= 12.0 || sample.ay >= 0.22) return { text: 'RIGHT_BANK_APEX', cls: 'tag-lateral' };
+      if (sample.roll > 4.0 || sample.ay > 0.08) return { text: 'RIGHT_ENTRY', cls: 'tag-lateral' };
+      return { text: 'STRAIGHT_PATH', cls: 'tag-steady' };
+    }
+  },
+  left_turn: {
+    key: 'left_turn',
+    name: 'Left Turn',
+    title: 'Left Turn & Banking Lab',
+    tag: 'COUNTER LATERAL & ROLL (-ROLL, -AY)',
+    desc: 'Move forward while rotating and banking counter-clockwise to the left. Calibrate negative lateral acceleration (-Ay) and negative lean angle (-Roll).',
+    guideSteps: [
+      { step: '1. Turn Entry:', desc: 'Straight approach (Roll ~0°, Ay ~0.0g)' },
+      { step: '2. Left Apex:', desc: 'Counter-clockwise bank to left (-Roll < -12°, -Ay < -0.20g)' },
+      { step: '3. Exit / Upright:', desc: 'Return upright to straight path' }
+    ],
+    primaryMetric: 'Peak Bank (-Roll)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.0°';
+      let minRoll = Infinity, minAy = Infinity;
+      samples.forEach(s => {
+        if (s.roll < minRoll) minRoll = s.roll;
+        if (s.ay < minAy) minAy = s.ay;
+      });
+      return `Roll: ${minRoll < Infinity ? minRoll.toFixed(1) : '0.0'}° / Ay: ${minAy < Infinity ? minAy.toFixed(2) : '0.00'}g`;
+    },
+    classifySample: (sample) => {
+      if (sample.roll <= -12.0 || sample.ay <= -0.22) return { text: 'LEFT_BANK_APEX', cls: 'tag-lateral' };
+      if (sample.roll < -4.0 || sample.ay < -0.08) return { text: 'LEFT_ENTRY', cls: 'tag-lateral' };
+      return { text: 'STRAIGHT_PATH', cls: 'tag-steady' };
+    }
+  },
+  hard_brake: {
+    key: 'hard_brake',
+    name: 'Hard Braking',
+    title: 'Hard Braking / Emergency Stop Lab',
+    tag: 'RAPID LONGITUDINAL DECELERATION (-AZ SPIKE)',
+    desc: 'Simulate an abrupt stop from motion: rapid longitudinal deceleration spike (-Az < -0.35g) coupled with nose pitch forward dip.',
+    guideSteps: [
+      { step: '1. Fast In-Motion:', desc: 'Forward movement at test speed' },
+      { step: '2. Abrupt Halt:', desc: 'Sharp braking stop (-Az spike < -0.35g)' },
+      { step: '3. Standstill:', desc: '0 km/h stationary halt' }
+    ],
+    primaryMetric: 'Max Decel (-Az)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.00g';
+      let minAz = Infinity;
+      samples.forEach(s => { if (s.az < minAz) minAz = s.az; });
+      return `Peak Decel: ${minAz < Infinity ? minAz.toFixed(2) : '0.00'}g`;
+    },
+    classifySample: (sample) => {
+      if (sample.az <= -0.35) return { text: 'HARSH_DECEL_SPIKE', cls: 'tag-brake' };
+      if (sample.speed <= 0.8 && sample.az > -0.15) return { text: 'FULL_STANDSTILL', cls: 'tag-steady' };
+      return { text: 'TRANSIT_MOTION', cls: 'tag-steady' };
+    }
+  },
+  overspeeding: {
+    key: 'overspeeding',
+    name: 'Overspeeding',
+    title: 'Overspeeding Velocity Lab',
+    tag: 'VELOCITY SURGE & SPEED THRESHOLD',
+    desc: 'Calibrate walking baseline (3-5 km/h) versus running sprint (> 10 km/h) to establish reliable velocity surge alerts and speed limits.',
+    guideSteps: [
+      { step: '1. Walk Baseline:', desc: 'Walk steady pace (3 to 5 km/h)' },
+      { step: '2. Velocity Surge:', desc: 'Run / sprint to exceed 10+ km/h' },
+      { step: '3. Decel Recovery:', desc: 'Slow down to walking pace' }
+    ],
+    primaryMetric: 'Peak Speed (km/h)',
+    getPeakMetric: (samples) => {
+      if (!samples || samples.length === 0) return 'Peak: 0.0 km/h';
+      let maxSpd = -Infinity;
+      samples.forEach(s => { if (s.speed > maxSpd) maxSpd = s.speed; });
+      return `Peak Speed: ${maxSpd > -Infinity ? maxSpd.toFixed(1) : '0.0'} km/h`;
+    },
+    classifySample: (sample) => {
+      if (sample.speed >= 14.0) return { text: 'SEVERE_OVERSPEED', cls: 'tag-brake' };
+      if (sample.speed >= 8.0) return { text: 'OVERSPEED_SURGE', cls: 'tag-speed' };
+      if (sample.speed >= 2.5) return { text: 'WALK_BASELINE', cls: 'tag-steady' };
+      return { text: 'IDLE_STATIC', cls: 'tag-steady' };
+    }
+  }
+};
+
+let currentManeuverKey = 'speed_breaker';
+let isKinRecording = false;
+let kinRecordStartTime = 0;
+let kinRecordTimerInterval = null;
+let kinSamplingInterval = null;
+let kinCurrentRunSamples = [];
+let kinRunsHistory = [];
+let kinRunsFilter = 'current'; // 'current' or 'all'
+let kinExpandedTables = new Set();
+let kinLastStreamTime = 0;
+
+let latestTelemSnapshot = {
+  ax: 0.0,
+  ay: 0.0,
+  az: 0.0,
+  tilt: 0.0,
+  roll: 0.0,
+  pitch: 0.0,
+  speed: 0.0,
+  timestamp: Date.now()
+};
+
+function loadKinematicsRunsFromStorage() {
+  try {
+    const raw = localStorage.getItem('chalok_kinematics_runs');
+    if (raw) {
+      kinRunsHistory = JSON.parse(raw) || [];
+    }
+  } catch (e) {
+    console.warn("Could not load stored kinematics runs:", e);
+    kinRunsHistory = [];
+  }
+}
+
+function saveKinematicsRunsToStorage() {
+  try {
+    localStorage.setItem('chalok_kinematics_runs', JSON.stringify(kinRunsHistory));
+  } catch (e) {
+    console.warn("Could not save kinematics runs:", e);
+  }
+}
+
+function selectKinematicsManeuver(key) {
+  if (!KINEMATIC_MANEUVERS[key]) return;
+  currentManeuverKey = key;
+  const cfg = KINEMATIC_MANEUVERS[key];
+
+  // Update active pill button
+  document.querySelectorAll('.kin-cat-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-maneuver') === key);
+  });
+
+  // Update stage header and instructions
+  const tagEl = document.getElementById('kinActiveTag');
+  const titleEl = document.getElementById('kinActiveTitle');
+  const descEl = document.getElementById('kinActiveDesc');
+  const guideEl = document.getElementById('kinMimicGuide');
+  const btnText = document.getElementById('kinRecordBtnText');
+
+  if (tagEl) tagEl.textContent = cfg.tag;
+  if (titleEl) titleEl.textContent = cfg.title;
+  if (descEl) descEl.textContent = cfg.desc;
+
+  if (guideEl && cfg.guideSteps) {
+    guideEl.innerHTML = cfg.guideSteps.map(gs => `
+      <div class="guide-step"><strong>${escapeHtml(gs.step)}</strong> ${escapeHtml(gs.desc)}</div>
+    `).join('');
+  }
+
+  if (btnText && !isKinRecording) {
+    btnText.textContent = `Start Recording ${cfg.name}`;
+  }
+
+  // If filter is set to current, re-render runs
+  if (kinRunsFilter === 'current') {
+    renderKinematicsRuns();
+  }
+}
+
+function updateKinematicsHUDElements(telem) {
+  const axEl = document.getElementById('hudAx');
+  const ayEl = document.getElementById('hudAy');
+  const azEl = document.getElementById('hudAz');
+  const pitchEl = document.getElementById('hudPitch');
+  const rollEl = document.getElementById('hudRoll');
+  const speedEl = document.getElementById('hudSpeed');
+  const streamStatus = document.getElementById('hudStreamStatus');
+  const linkBadge = document.getElementById('kinDeviceLinkBadge');
+
+  if (axEl) axEl.textContent = `${(telem.ax >= 0 ? '+' : '') + telem.ax.toFixed(2)} g`;
+  if (ayEl) ayEl.textContent = `${(telem.ay >= 0 ? '+' : '') + telem.ay.toFixed(2)} g`;
+  if (azEl) azEl.textContent = `${(telem.az >= 0 ? '+' : '') + telem.az.toFixed(2)} g`;
+  if (pitchEl) pitchEl.textContent = `${(telem.pitch >= 0 ? '+' : '') + telem.pitch.toFixed(1)}°`;
+  if (rollEl) rollEl.textContent = `${(telem.roll >= 0 ? '+' : '') + telem.roll.toFixed(1)}°`;
+  if (speedEl) speedEl.textContent = `${telem.speed.toFixed(1)} km/h`;
+
+  if (streamStatus) streamStatus.textContent = 'Stream: Active';
+  if (linkBadge) {
+    linkBadge.textContent = 'Device Connected';
+    linkBadge.classList.add('active');
+  }
+}
+
+function updateKinematicsTelemetry(telem) {
+  kinLastStreamTime = Date.now();
+  latestTelemSnapshot = {
+    ax: telem.ax,
+    ay: telem.ay,
+    az: telem.az,
+    tilt: telem.tilt,
+    roll: telem.roll,
+    pitch: telem.pitch,
+    speed: telem.speed || 0.0,
+    timestamp: telem.timestamp || Date.now()
+  };
+
+  updateKinematicsHUDElements(latestTelemSnapshot);
+
+  // If currently recording, capture this live incoming hardware sample
+  if (isKinRecording) {
+    recordKinematicsSample(latestTelemSnapshot);
+  }
+}
+
+function recordKinematicsSample(snap) {
+  const now = Date.now();
+  const relTimeSec = Math.max(0, (now - kinRecordStartTime) / 1000);
+  const d = new Date(now);
+  const timeStr = d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
+
+  const maneuverCfg = KINEMATIC_MANEUVERS[currentManeuverKey];
+  const classification = maneuverCfg && maneuverCfg.classifySample ? maneuverCfg.classifySample(snap) : { text: 'STEADY', cls: 'tag-steady' };
+
+  const sample = {
+    num: kinCurrentRunSamples.length + 1,
+    relTimeSec: parseFloat(relTimeSec.toFixed(2)),
+    timeStr,
+    timestamp: now,
+    ax: parseFloat(snap.ax.toFixed(2)),
+    ay: parseFloat(snap.ay.toFixed(2)),
+    az: parseFloat(snap.az.toFixed(2)),
+    pitch: parseFloat(snap.pitch.toFixed(1)),
+    roll: parseFloat(snap.roll.toFixed(1)),
+    tilt: parseFloat(snap.tilt.toFixed(1)),
+    speed: parseFloat(snap.speed.toFixed(1)),
+    tagText: classification.text,
+    tagCls: classification.cls
+  };
+
+  kinCurrentRunSamples.push(sample);
+
+  // Update live sample count and live peak metric in UI
+  const samplesEl = document.getElementById('kinLiveSamples');
+  const peakEl = document.getElementById('kinLivePeakMetric');
+
+  if (samplesEl) samplesEl.textContent = kinCurrentRunSamples.length;
+  if (peakEl && maneuverCfg && maneuverCfg.getPeakMetric) {
+    peakEl.textContent = maneuverCfg.getPeakMetric(kinCurrentRunSamples);
+  }
+}
+
+function startKinematicsRecording() {
+  const cfg = KINEMATIC_MANEUVERS[currentManeuverKey];
+  isKinRecording = true;
+  kinRecordStartTime = Date.now();
+  kinCurrentRunSamples = [];
+
+  const btnRecord = document.getElementById('btnToggleKinRecord');
+  const btnText = document.getElementById('kinRecordBtnText');
+  const liveStats = document.getElementById('kinLiveRecordStats');
+  const liveTimer = document.getElementById('kinLiveTimer');
+  const liveSamples = document.getElementById('kinLiveSamples');
+  const livePeak = document.getElementById('kinLivePeakMetric');
+
+  if (btnRecord) {
+    btnRecord.classList.remove('idle');
+    btnRecord.classList.add('recording');
+  }
+  if (btnText) btnText.textContent = `Stop & Save Run`;
+  if (liveStats) liveStats.classList.remove('hidden');
+  if (liveTimer) liveTimer.textContent = '00:00.0';
+  if (liveSamples) liveSamples.textContent = '0';
+  if (livePeak) livePeak.textContent = 'Peak: --';
+
+  // Capture initial baseline sample
+  recordKinematicsSample(latestTelemSnapshot);
+
+  // High-resolution interval timer for elapsed seconds
+  clearInterval(kinRecordTimerInterval);
+  kinRecordTimerInterval = setInterval(() => {
+    if (!isKinRecording) return;
+    const elapsedMs = Date.now() - kinRecordStartTime;
+    const totalSec = Math.floor(elapsedMs / 1000);
+    const mins = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const secs = String(totalSec % 60).padStart(2, '0');
+    const tenths = Math.floor((elapsedMs % 1000) / 100);
+    if (liveTimer) {
+      liveTimer.textContent = `${mins}:${secs}.${tenths}`;
+    }
+  }, 100);
+
+  // Periodic sampler to capture steady high-resolution time series (every 350ms)
+  clearInterval(kinSamplingInterval);
+  kinSamplingInterval = setInterval(() => {
+    if (!isKinRecording) return;
+    recordKinematicsSample(latestTelemSnapshot);
+  }, 350);
+}
+
+function stopKinematicsRecording() {
+  if (!isKinRecording) return;
+  isKinRecording = false;
+
+  clearInterval(kinRecordTimerInterval);
+  clearInterval(kinSamplingInterval);
+
+  const cfg = KINEMATIC_MANEUVERS[currentManeuverKey];
+  const btnRecord = document.getElementById('btnToggleKinRecord');
+  const btnText = document.getElementById('kinRecordBtnText');
+  const liveStats = document.getElementById('kinLiveRecordStats');
+
+  if (btnRecord) {
+    btnRecord.classList.remove('recording');
+    btnRecord.classList.add('idle');
+  }
+  if (btnText) btnText.textContent = `Start Recording ${cfg.name}`;
+  if (liveStats) liveStats.classList.add('hidden');
+
+  // If fewer than 2 samples, capture final snapshot
+  if (kinCurrentRunSamples.length < 2) {
+    recordKinematicsSample(latestTelemSnapshot);
+  }
+
+  const durationSec = Math.max(0.1, (Date.now() - kinRecordStartTime) / 1000);
+
+  // Compute summary metrics for this run
+  let maxPitch = -Infinity, minPitch = Infinity;
+  let maxRoll = -Infinity, minRoll = Infinity;
+  let maxAx = -Infinity, minAx = Infinity;
+  let maxAy = -Infinity, minAy = Infinity;
+  let maxAz = -Infinity, minAz = Infinity;
+  let maxSpeed = -Infinity;
+
+  kinCurrentRunSamples.forEach(s => {
+    if (s.pitch > maxPitch) maxPitch = s.pitch;
+    if (s.pitch < minPitch) minPitch = s.pitch;
+    if (s.roll > maxRoll) maxRoll = s.roll;
+    if (s.roll < minRoll) minRoll = s.roll;
+    if (s.ax > maxAx) maxAx = s.ax;
+    if (s.ax < minAx) minAx = s.ax;
+    if (s.ay > maxAy) maxAy = s.ay;
+    if (s.ay < minAy) minAy = s.ay;
+    if (s.az > maxAz) maxAz = s.az;
+    if (s.az < minAz) minAz = s.az;
+    if (s.speed > maxSpeed) maxSpeed = s.speed;
+  });
+
+  const runId = 'kin_run_' + Date.now();
+  const newRun = {
+    id: runId,
+    maneuver: currentManeuverKey,
+    maneuverTitle: cfg.name,
+    startTime: kinRecordStartTime,
+    endTime: Date.now(),
+    durationSec: parseFloat(durationSec.toFixed(1)),
+    samples: [...kinCurrentRunSamples],
+    peakMetric: cfg.getPeakMetric(kinCurrentRunSamples),
+    summary: {
+      maxPitch: maxPitch > -Infinity ? maxPitch : 0,
+      minPitch: minPitch < Infinity ? minPitch : 0,
+      maxRoll: maxRoll > -Infinity ? maxRoll : 0,
+      minRoll: minRoll < Infinity ? minRoll : 0,
+      maxAx: maxAx > -Infinity ? maxAx : 0,
+      minAx: minAx < Infinity ? minAx : 0,
+      maxAy: maxAy > -Infinity ? maxAy : 0,
+      minAy: minAy < Infinity ? minAy : 0,
+      maxAz: maxAz > -Infinity ? maxAz : 0,
+      minAz: minAz < Infinity ? minAz : 0,
+      maxSpeed: maxSpeed > -Infinity ? maxSpeed : 0
+    }
+  };
+
+  // Prepend new run to history
+  kinRunsHistory.unshift(newRun);
+  kinExpandedTables.add(runId); // auto-expand newest run table
+  saveKinematicsRunsToStorage();
+  renderKinematicsRuns();
+}
+
+function renderKinematicsRuns() {
+  const container = document.getElementById('kinRunsList');
+  const countBadge = document.getElementById('kinRunsCountBadge');
+  if (!container) return;
+
+  const filteredRuns = kinRunsFilter === 'all'
+    ? kinRunsHistory
+    : kinRunsHistory.filter(r => r.maneuver === currentManeuverKey);
+
+  if (countBadge) {
+    countBadge.textContent = `${filteredRuns.length} Run${filteredRuns.length === 1 ? '' : 's'}`;
+  }
+
+  if (filteredRuns.length === 0) {
+    const curName = KINEMATIC_MANEUVERS[currentManeuverKey]?.name || 'this maneuver';
+    container.innerHTML = `
+      <div class="kin-empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+          <line x1="16" y1="13" x2="8" y2="13"></line>
+          <line x1="16" y1="17" x2="8" y2="17"></line>
+        </svg>
+        <h4>No Recorded Runs for ${escapeHtml(curName)} Yet</h4>
+        <p>Click "Start Recording", move the device to mimic ${escapeHtml(curName)}, then click "Stop & Save Run" to generate your tabular dataset.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = filteredRuns.map(run => {
+    const d = new Date(run.startTime);
+    const dateFormatted = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeFormatted = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const isExpanded = kinExpandedTables.has(run.id);
+
+    return `
+      <div class="kin-run-card" id="runCard_${run.id}">
+        <!-- Run Card Header -->
+        <div class="kin-run-header">
+          <div class="kin-run-meta">
+            <span class="pill-calc">${escapeHtml(run.maneuverTitle || run.maneuver)}</span>
+            <span class="kin-run-time">${dateFormatted} • ${timeFormatted}</span>
+            <span class="kin-run-duration">Duration: ${run.durationSec}s</span>
+            <span class="kin-run-samples-count">${run.samples.length} samples</span>
+          </div>
+          <span class="run-peak-badge">${escapeHtml(run.peakMetric)}</span>
+        </div>
+
+        <!-- 4-Tile Quick Metric Overview -->
+        <div class="kin-run-stat-grid">
+          <div class="kin-stat-item">
+            <span class="kin-stat-key">PITCH PEAK / MIN</span>
+            <span class="kin-stat-val">${(run.summary.maxPitch >= 0 ? '+' : '') + run.summary.maxPitch.toFixed(1)}° / ${(run.summary.minPitch >= 0 ? '+' : '') + run.summary.minPitch.toFixed(1)}°</span>
+          </div>
+          <div class="kin-stat-item">
+            <span class="kin-stat-key">ROLL PEAK / MIN</span>
+            <span class="kin-stat-val">${(run.summary.maxRoll >= 0 ? '+' : '') + run.summary.maxRoll.toFixed(1)}° / ${(run.summary.minRoll >= 0 ? '+' : '') + run.summary.minRoll.toFixed(1)}°</span>
+          </div>
+          <div class="kin-stat-item">
+            <span class="kin-stat-key">AX VERT / AZ LONG</span>
+            <span class="kin-stat-val">${(run.summary.maxAx >= 0 ? '+' : '') + run.summary.maxAx.toFixed(2)}g / ${(run.summary.minAz >= 0 ? '+' : '') + run.summary.minAz.toFixed(2)}g</span>
+          </div>
+          <div class="kin-stat-item">
+            <span class="kin-stat-key">PEAK SPEED</span>
+            <span class="kin-stat-val">${run.summary.maxSpeed.toFixed(1)} km/h</span>
+          </div>
+        </div>
+
+        <!-- Actions Row -->
+        <div class="kin-run-actions-row">
+          <button class="btn-toggle-table" onclick="toggleRunTable('${run.id}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="3" y1="15" x2="21" y2="15"></line>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+            <span id="toggleText_${run.id}">${isExpanded ? 'Hide Table Log' : `View Table Log (${run.samples.length} rows)`}</span>
+          </button>
+
+          <div class="run-action-btns">
+            <button class="btn-run-action" onclick="exportSingleRunCSV('${run.id}')" title="Download CSV for this run">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              <span>CSV</span>
+            </button>
+            <button class="btn-run-action danger" onclick="deleteKinematicsRun('${run.id}')" title="Delete this test run">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              <span>Delete</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Expandable Tabular Log -->
+        <div id="tableWrapper_${run.id}" class="kin-table-wrapper ${isExpanded ? '' : 'hidden'}">
+          <table class="kin-data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Rel Time</th>
+                <th>Timestamp</th>
+                <th>Ax (Vert)</th>
+                <th>Ay (Lat)</th>
+                <th>Az (Long)</th>
+                <th>Pitch</th>
+                <th>Roll</th>
+                <th>Tilt</th>
+                <th>Speed</th>
+                <th>Dynamic State</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${run.samples.map(s => `
+                <tr>
+                  <td>${s.num}</td>
+                  <td>+${s.relTimeSec.toFixed(2)}s</td>
+                  <td>${escapeHtml(s.timeStr)}</td>
+                  <td>${(s.ax >= 0 ? '+' : '') + s.ax.toFixed(2)}g</td>
+                  <td>${(s.ay >= 0 ? '+' : '') + s.ay.toFixed(2)}g</td>
+                  <td>${(s.az >= 0 ? '+' : '') + s.az.toFixed(2)}g</td>
+                  <td>${(s.pitch >= 0 ? '+' : '') + s.pitch.toFixed(1)}°</td>
+                  <td>${(s.roll >= 0 ? '+' : '') + s.roll.toFixed(1)}°</td>
+                  <td>${s.tilt.toFixed(1)}°</td>
+                  <td>${s.speed.toFixed(1)} km/h</td>
+                  <td><span class="tag-pill ${escapeHtml(s.tagCls || 'tag-steady')}">${escapeHtml(s.tagText || 'STEADY')}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function toggleRunTable(runId) {
+  const wrapper = document.getElementById(`tableWrapper_${runId}`);
+  const toggleText = document.getElementById(`toggleText_${runId}`);
+  if (!wrapper) return;
+
+  const isHidden = wrapper.classList.toggle('hidden');
+  if (isHidden) {
+    kinExpandedTables.delete(runId);
+    if (toggleText) {
+      const run = kinRunsHistory.find(r => r.id === runId);
+      toggleText.textContent = `View Table Log (${run ? run.samples.length : 0} rows)`;
+    }
+  } else {
+    kinExpandedTables.add(runId);
+    if (toggleText) toggleText.textContent = 'Hide Table Log';
+  }
+}
+
+function deleteKinematicsRun(runId) {
+  if (!confirm("Are you sure you want to delete this recorded test run?")) return;
+  kinRunsHistory = kinRunsHistory.filter(r => r.id !== runId);
+  kinExpandedTables.delete(runId);
+  saveKinematicsRunsToStorage();
+  renderKinematicsRuns();
+}
+
+function exportSingleRunCSV(runId) {
+  const run = kinRunsHistory.find(r => r.id === runId);
+  if (!run || !run.samples || run.samples.length === 0) {
+    alert("No data available to export for this run.");
+    return;
+  }
+
+  const csvRows = [];
+  csvRows.push(['SerialNo', 'RelTime_Sec', 'Timestamp', 'Ax_Vert_g', 'Ay_Lat_g', 'Az_Long_g', 'Pitch_deg', 'Roll_deg', 'Tilt_deg', 'Speed_kmh', 'Dynamic_State'].join(','));
+
+  run.samples.forEach(s => {
+    csvRows.push([
+      s.num,
+      s.relTimeSec.toFixed(2),
+      `"${s.timeStr}"`,
+      s.ax.toFixed(2),
+      s.ay.toFixed(2),
+      s.az.toFixed(2),
+      s.pitch.toFixed(1),
+      s.roll.toFixed(1),
+      s.tilt.toFixed(1),
+      s.speed.toFixed(1),
+      `"${s.tagText || 'STEADY'}"`
+    ].join(','));
+  });
+
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `chalok_${run.maneuver}_${run.id}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportAllKinematicsCSV() {
+  if (kinRunsHistory.length === 0) {
+    alert("No recorded kinematic runs available to export.");
+    return;
+  }
+
+  const csvRows = [];
+  csvRows.push(['Run_ID', 'Maneuver', 'Run_Date', 'SerialNo', 'RelTime_Sec', 'Timestamp', 'Ax_Vert_g', 'Ay_Lat_g', 'Az_Long_g', 'Pitch_deg', 'Roll_deg', 'Tilt_deg', 'Speed_kmh', 'Dynamic_State'].join(','));
+
+  kinRunsHistory.forEach(run => {
+    const dStr = new Date(run.startTime).toISOString();
+    run.samples.forEach(s => {
+      csvRows.push([
+        `"${run.id}"`,
+        `"${run.maneuver}"`,
+        `"${dStr}"`,
+        s.num,
+        s.relTimeSec.toFixed(2),
+        `"${s.timeStr}"`,
+        s.ax.toFixed(2),
+        s.ay.toFixed(2),
+        s.az.toFixed(2),
+        s.pitch.toFixed(1),
+        s.roll.toFixed(1),
+        s.tilt.toFixed(1),
+        s.speed.toFixed(1),
+        `"${s.tagText || 'STEADY'}"`
+      ].join(','));
+    });
+  });
+
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `chalok_kinematics_dataset_${Date.now()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function clearAllKinematicsRuns() {
+  if (kinRunsHistory.length === 0) {
+    alert("No runs to clear.");
+    return;
+  }
+  if (!confirm("Are you sure you want to permanently delete ALL recorded test runs? This cannot be undone.")) return;
+  kinRunsHistory = [];
+  kinExpandedTables.clear();
+  saveKinematicsRunsToStorage();
+  renderKinematicsRuns();
+}
+
+// Expose action handlers on window for HTML onclick compatibility
+window.toggleRunTable = toggleRunTable;
+window.exportSingleRunCSV = exportSingleRunCSV;
+window.deleteKinematicsRun = deleteKinematicsRun;
+
+function setupKinematicsEventListeners() {
+  // Maneuver pill clicks
+  document.querySelectorAll('.kin-cat-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const m = btn.getAttribute('data-maneuver');
+      selectKinematicsManeuver(m);
+    });
+  });
+
+  // Toggle record button
+  const btnToggleRecord = document.getElementById('btnToggleKinRecord');
+  if (btnToggleRecord) {
+    btnToggleRecord.addEventListener('click', () => {
+      if (isKinRecording) {
+        stopKinematicsRecording();
+      } else {
+        startKinematicsRecording();
+      }
+    });
+  }
+
+  // Filter buttons: Current vs All
+  const btnFilterCurrent = document.getElementById('btnFilterCurrentManeuver');
+  const btnFilterAll = document.getElementById('btnFilterAllManeuvers');
+
+  if (btnFilterCurrent) {
+    btnFilterCurrent.addEventListener('click', () => {
+      kinRunsFilter = 'current';
+      btnFilterCurrent.classList.add('active');
+      if (btnFilterAll) btnFilterAll.classList.remove('active');
+      renderKinematicsRuns();
+    });
+  }
+
+  if (btnFilterAll) {
+    btnFilterAll.addEventListener('click', () => {
+      kinRunsFilter = 'all';
+      btnFilterAll.classList.add('active');
+      if (btnFilterCurrent) btnFilterCurrent.classList.remove('active');
+      renderKinematicsRuns();
+    });
+  }
+
+  // Global action buttons: Export all & Clear all
+  const btnExportAll = document.getElementById('btnExportAllKinematics');
+  const btnClearAll = document.getElementById('btnClearAllKinematics');
+
+  if (btnExportAll) {
+    btnExportAll.addEventListener('click', exportAllKinematicsCSV);
+  }
+  if (btnClearAll) {
+    btnClearAll.addEventListener('click', clearAllKinematicsRuns);
+  }
+
+  // Optional mobile device motion fallback (e.g. testing in hand on mobile browser)
+  if (window.DeviceMotionEvent && typeof window.DeviceMotionEvent.requestPermission !== 'function') {
+    window.addEventListener('devicemotion', (e) => {
+      if (Date.now() - kinLastStreamTime > 10000 && e.accelerationIncludingGravity) {
+        const ag = e.accelerationIncludingGravity;
+        latestTelemSnapshot.ax = (ag.z || 9.8) / 9.80665;
+        latestTelemSnapshot.ay = (ag.x || 0) / 9.80665;
+        latestTelemSnapshot.az = (ag.y || 0) / 9.80665;
+        updateKinematicsHUDElements(latestTelemSnapshot);
+      }
+    });
+  }
+
+  if (window.DeviceOrientationEvent) {
+    window.addEventListener('deviceorientation', (e) => {
+      if (Date.now() - kinLastStreamTime > 10000) {
+        latestTelemSnapshot.pitch = e.beta || 0;
+        latestTelemSnapshot.roll = e.gamma || 0;
+        updateKinematicsHUDElements(latestTelemSnapshot);
+      }
+    });
+  }
+}
+
+function initKinematicsLab() {
+  loadKinematicsRunsFromStorage();
+  selectKinematicsManeuver('speed_breaker');
+  setupKinematicsEventListeners();
+  renderKinematicsRuns();
+}
+
+// =============================================================================
 // APP INITIALIZATION
 // =============================================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -1295,4 +2168,5 @@ document.addEventListener('DOMContentLoaded', () => {
   setupClearHistoryButton();
   setupTripModalClose();
   setupNavigation();
+  initKinematicsLab();
 });

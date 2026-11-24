@@ -65,6 +65,13 @@
           </svg>
           <span>Telemetry & Sensors</span>
         </button>
+
+        <button class="desktop-nav-btn" data-view="viewKinematics">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+          <span>Motion Lab</span>
+        </button>
       </nav>
 
       <!-- Mode Switcher (Rider vs Admin) -->
@@ -531,6 +538,185 @@
         </div>
       </section>
 
+      <!-- ==================================================== -->
+      <!-- VIEW 4: KINEMATIC MOTION LAB & DATA RECORDER -->
+      <!-- ==================================================== -->
+      <section id="viewKinematics" class="view-panel">
+        <div class="kinematics-container">
+          
+          <!-- Page Header -->
+          <div class="kin-header">
+            <div class="kin-titles">
+              <div class="kin-badge-row">
+                <span class="pill-calc">CHALOK LAB</span>
+                <span id="kinDeviceLinkBadge" class="link-status-badge active">Device Connected</span>
+              </div>
+              <h2>Kinematic Motion Lab & Data Logger</h2>
+              <p>Capture real-time 6-DoF sensor runs, validate threshold triggers, and log time-series data for thesis ML classification.</p>
+            </div>
+            <div class="kin-global-actions">
+              <button id="btnExportAllKinematics" class="btn-kin-secondary" title="Export all recorded runs as CSV">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Export CSV</span>
+              </button>
+              <button id="btnClearAllKinematics" class="btn-kin-danger" title="Delete all recorded runs">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                <span>Clear All</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Maneuver Category Switcher Pills (Horizontal Scroll on Mobile) -->
+          <div class="kin-categories-scroll">
+            <div class="kin-categories-nav">
+              <button class="kin-cat-btn active" data-maneuver="speed_breaker">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12c3-6 6-6 9 0s6 6 9 0"/></svg>
+                <span>Speed Breaker</span>
+              </button>
+              <button class="kin-cat-btn" data-maneuver="pothole">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 4 4 4-4"/></svg>
+                <span>Pothole / Dip</span>
+              </button>
+              <button class="kin-cat-btn" data-maneuver="forward">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                <span>Forward Move</span>
+              </button>
+              <button class="kin-cat-btn" data-maneuver="backward">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                <span>Backward Move</span>
+              </button>
+              <button class="kin-cat-btn" data-maneuver="right_turn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="10 9 15 4 20 9"/><path d="M4 20h7a4 4 0 0 0 4-4V4"/></svg>
+                <span>Right Turn</span>
+              </button>
+              <button class="kin-cat-btn" data-maneuver="left_turn">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="14 9 9 4 4 9"/><path d="M20 20h-7a4 4 0 0 1-4-4V4"/></svg>
+                <span>Left Turn</span>
+              </button>
+              <button class="kin-cat-btn" data-maneuver="hard_brake">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span>Hard Braking</span>
+              </button>
+              <button class="kin-cat-btn" data-maneuver="overspeeding">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span>Overspeeding</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Active Stage Workarea: Guidelines & Live HUD -->
+          <div class="kin-stage-grid">
+            
+            <!-- Left Stage Card: Maneuver Instructions & Recording Trigger -->
+            <div class="kin-card kin-stage-control-card">
+              <div class="kin-stage-top">
+                <div class="kin-stage-info">
+                  <span class="kin-stage-tag" id="kinActiveTag">MANEUVER TEST</span>
+                  <h3 id="kinActiveTitle">Speed Breaker Detection Lab</h3>
+                  <p id="kinActiveDesc">Simulate driving over an uneven speed hump. Move device forward while tilting the front wheel upward, leveling at peak, then tilting down as rear clears.</p>
+                </div>
+                <div class="kin-mimic-guide" id="kinMimicGuide">
+                  <div class="guide-step"><strong>1. Ascend:</strong> Tilt bottom forward/up (+Pitch)</div>
+                  <div class="guide-step"><strong>2. Crest:</strong> Brief level pause at peak</div>
+                  <div class="guide-step"><strong>3. Descend:</strong> Tilt front down (-Pitch) into settle</div>
+                </div>
+              </div>
+
+              <!-- Big Record / Stop Action Button -->
+              <div class="kin-record-action-box">
+                <button id="btnToggleKinRecord" class="btn-kin-record idle">
+                  <span class="record-orb"></span>
+                  <span id="kinRecordBtnText">Start Recording Speed Breaker</span>
+                </button>
+                <div id="kinLiveRecordStats" class="kin-live-stats hidden">
+                  <div class="stat-pill"><span class="pulse-red"></span> <span id="kinLiveTimer">00:00.0</span></div>
+                  <div class="stat-pill"><span id="kinLiveSamples">0</span> samples</div>
+                  <div class="stat-pill accent-pill"><span id="kinLivePeakMetric">Peak: 0.0g</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Stage Card: Live Orientation & Kinematic Sensor HUD -->
+            <div class="kin-card kin-live-hud-card">
+              <div class="hud-header">
+                <h4>Live Kinematic Telemetry HUD</h4>
+                <span class="hud-rate" id="hudStreamStatus">Stream: Active</span>
+              </div>
+
+              <div class="hud-gauges-grid">
+                <div class="hud-gauge">
+                  <span class="gauge-axis">Ax (Vertical)</span>
+                  <span id="hudAx" class="gauge-val">+0.00 g</span>
+                  <span class="gauge-hint">Pothole / Heave</span>
+                </div>
+                <div class="hud-gauge">
+                  <span class="gauge-axis">Ay (Lateral)</span>
+                  <span id="hudAy" class="gauge-val">+0.00 g</span>
+                  <span class="gauge-hint">Left / Right Turns</span>
+                </div>
+                <div class="hud-gauge">
+                  <span class="gauge-axis">Az (Longitudinal)</span>
+                  <span id="hudAz" class="gauge-val">+0.00 g</span>
+                  <span class="gauge-hint">Forward / Braking</span>
+                </div>
+                <div class="hud-gauge">
+                  <span class="gauge-axis">Pitch (Y)</span>
+                  <span id="hudPitch" class="gauge-val">0.0°</span>
+                  <span class="gauge-hint">Hump Inclination</span>
+                </div>
+                <div class="hud-gauge">
+                  <span class="gauge-axis">Roll (X)</span>
+                  <span id="hudRoll" class="gauge-val">0.0°</span>
+                  <span class="gauge-hint">Lateral Banking</span>
+                </div>
+                <div class="hud-gauge">
+                  <span class="gauge-axis">Speed</span>
+                  <span id="hudSpeed" class="gauge-val">0.0 km/h</span>
+                  <span class="gauge-hint">Velocity Surge</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Section: Recorded Runs Tabular History -->
+          <div class="kin-runs-section">
+            <div class="runs-section-header">
+              <div class="runs-title-group">
+                <h3>Recorded Test Runs</h3>
+                <span id="kinRunsCountBadge" class="runs-count-pill">0 Runs</span>
+              </div>
+              <div class="runs-filter-group">
+                <button id="btnFilterCurrentManeuver" class="pill-filter active">Current Maneuver</button>
+                <button id="btnFilterAllManeuvers" class="pill-filter">All Maneuvers</button>
+              </div>
+            </div>
+
+            <div id="kinRunsList" class="kin-runs-container">
+              <!-- Dynamically populated runs list with embedded expandable sample tables -->
+              <div class="kin-empty-state">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+                <h4>No Recorded Runs for this Maneuver Yet</h4>
+                <p>Click "Start Recording", move the device to mimic the maneuver, then click "Stop & Save Run" to generate your tabular dataset.</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
     </main>
 
     <!-- Bottom Navigation Bar (ONLY visible on Mobile screen < 768px) -->
@@ -560,6 +746,13 @@
           <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
         </svg>
         <span>Telemetry</span>
+      </button>
+
+      <button class="mobile-nav-item" data-view="viewKinematics">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+        <span>Lab</span>
       </button>
 
       <button id="btnMobileModeToggle" class="mobile-nav-item" title="Toggle Rider/Admin Mode">
