@@ -486,6 +486,9 @@ function setupFirebaseListeners() {
     // Refresh Admin Journey Recording State & Last Recorded Display
     updateAdminRecordingUI();
     updateLastRecordedDisplay();
+    if (typeof updateKinematicsStandbyStatus === 'function') {
+      updateKinematicsStandbyStatus();
+    }
   });
 
   // C. Live Telemetry & GPS Coordinates (tracker/current)
@@ -1527,7 +1530,10 @@ let kinSamplingInterval = null;
 let kinCurrentRunSamples = [];
 let kinRunsHistory = [];
 let kinRunsFilter = 'current'; // 'current' or 'all'
-let kinExpandedTables = new Set();
+let kinRunsSortOrder = 'latest'; // 'latest' or 'oldest'
+let kinCurrentPage = 1;
+const kinRunsPerPage = 6;
+let activeModalRunId = null;
 let kinLastStreamTime = 0;
 
 let latestTelemSnapshot = {
@@ -1561,15 +1567,59 @@ function saveKinematicsRunsToStorage() {
   }
 }
 
+function updateKinematicsStandbyStatus() {
+  const badge = document.getElementById('kinDeviceLinkBadge');
+  const btnRecord = document.getElementById('btnToggleKinRecord');
+  const btnText = document.getElementById('kinRecordBtnText');
+
+  if (badge) {
+    if (isSharingActive) {
+      badge.className = 'link-status-badge active';
+      badge.textContent = 'Device Connected (Active)';
+    } else {
+      badge.className = 'link-status-badge standby';
+      badge.textContent = 'Device on Standby';
+    }
+  }
+
+  // Safety: If device went into standby during an active recording run, halt and save
+  if (isKinRecording && !isSharingActive) {
+    stopKinematicsRecording();
+    alert("Recording halted: Tracker went into STANDBY mode. The recorded run has been saved.");
+    return;
+  }
+
+  if (!isKinRecording && btnRecord && btnText) {
+    const cfg = KINEMATIC_MANEUVERS[currentManeuverKey];
+    if (!isSharingActive) {
+      btnRecord.classList.add('disabled-standby');
+      btnRecord.classList.remove('idle', 'recording');
+      btnRecord.title = 'Device is currently on standby. Press sharing button on tracker to record.';
+      btnText.textContent = 'Standby - Start Sharing First';
+    } else {
+      btnRecord.classList.remove('disabled-standby');
+      btnRecord.classList.add('idle');
+      btnRecord.title = '';
+      btnText.textContent = `Start Recording ${cfg ? cfg.name : ''}`;
+    }
+  }
+}
+
 function selectKinematicsManeuver(key) {
   if (!KINEMATIC_MANEUVERS[key]) return;
   currentManeuverKey = key;
   const cfg = KINEMATIC_MANEUVERS[key];
 
-  // Update active pill button
+  // Update active pill button on desktop
   document.querySelectorAll('.kin-cat-btn').forEach(btn => {
     btn.classList.toggle('active', btn.getAttribute('data-maneuver') === key);
   });
+
+  // Sync mobile dropdown selector
+  const mobSelect = document.getElementById('kinMobileSelect');
+  if (mobSelect && mobSelect.value !== key) {
+    mobSelect.value = key;
+  }
 
   // Update stage header and instructions
   const tagEl = document.getElementById('kinActiveTag');
@@ -1577,6 +1627,7 @@ function selectKinematicsManeuver(key) {
   const descEl = document.getElementById('kinActiveDesc');
   const guideEl = document.getElementById('kinMimicGuide');
   const btnText = document.getElementById('kinRecordBtnText');
+  const btnRecord = document.getElementById('btnToggleKinRecord');
 
   if (tagEl) tagEl.textContent = cfg.tag;
   if (titleEl) titleEl.textContent = cfg.title;
@@ -1589,11 +1640,21 @@ function selectKinematicsManeuver(key) {
   }
 
   if (btnText && !isKinRecording) {
-    btnText.textContent = `Start Recording ${cfg.name}`;
+    if (!isSharingActive) {
+      if (btnRecord) btnRecord.classList.add('disabled-standby');
+      btnText.textContent = 'Standby - Start Sharing First';
+    } else {
+      if (btnRecord) {
+        btnRecord.classList.remove('disabled-standby');
+        btnRecord.classList.add('idle');
+      }
+      btnText.textContent = `Start Recording ${cfg.name}`;
+    }
   }
 
-  // If filter is set to current, re-render runs
+  // If filter is set to current, reset pagination to page 1 and re-render
   if (kinRunsFilter === 'current') {
+    kinCurrentPage = 1;
     renderKinematicsRuns();
   }
 }
@@ -1615,10 +1676,15 @@ function updateKinematicsHUDElements(telem) {
   if (rollEl) rollEl.textContent = `${(telem.roll >= 0 ? '+' : '') + telem.roll.toFixed(1)}°`;
   if (speedEl) speedEl.textContent = `${telem.speed.toFixed(1)} km/h`;
 
-  if (streamStatus) streamStatus.textContent = 'Stream: Active';
+  if (streamStatus) streamStatus.textContent = isSharingActive ? 'Stream: Active' : 'Stream: Standby';
   if (linkBadge) {
-    linkBadge.textContent = 'Device Connected';
-    linkBadge.classList.add('active');
+    if (isSharingActive) {
+      linkBadge.textContent = 'Device Connected (Active)';
+      linkBadge.className = 'link-status-badge active';
+    } else {
+      linkBadge.textContent = 'Device on Standby';
+      linkBadge.className = 'link-status-badge standby';
+    }
   }
 }
 
@@ -1637,8 +1703,8 @@ function updateKinematicsTelemetry(telem) {
 
   updateKinematicsHUDElements(latestTelemSnapshot);
 
-  // If currently recording, capture this live incoming hardware sample
-  if (isKinRecording) {
+  // If currently recording and device is active, capture this live incoming hardware sample
+  if (isKinRecording && isSharingActive) {
     recordKinematicsSample(latestTelemSnapshot);
   }
 }
@@ -1681,6 +1747,12 @@ function recordKinematicsSample(snap) {
 }
 
 function startKinematicsRecording() {
+  // Prevent recording if device is on standby
+  if (!isSharingActive) {
+    alert("Cannot start recording: The device is currently on STANDBY.\nPress the sharing button on your physical tracker to start active sharing before recording kinematic maneuvers.");
+    return;
+  }
+
   const cfg = KINEMATIC_MANEUVERS[currentManeuverKey];
   isKinRecording = true;
   kinRecordStartTime = Date.now();
@@ -1694,7 +1766,7 @@ function startKinematicsRecording() {
   const livePeak = document.getElementById('kinLivePeakMetric');
 
   if (btnRecord) {
-    btnRecord.classList.remove('idle');
+    btnRecord.classList.remove('idle', 'disabled-standby');
     btnRecord.classList.add('recording');
   }
   if (btnText) btnText.textContent = `Stop & Save Run`;
@@ -1742,9 +1814,15 @@ function stopKinematicsRecording() {
 
   if (btnRecord) {
     btnRecord.classList.remove('recording');
-    btnRecord.classList.add('idle');
+    if (!isSharingActive) {
+      btnRecord.classList.add('disabled-standby');
+    } else {
+      btnRecord.classList.add('idle');
+    }
   }
-  if (btnText) btnText.textContent = `Start Recording ${cfg.name}`;
+  if (btnText) {
+    btnText.textContent = isSharingActive ? `Start Recording ${cfg.name}` : `Standby - Start Sharing First`;
+  }
   if (liveStats) liveStats.classList.add('hidden');
 
   // If fewer than 2 samples, capture final snapshot
@@ -1801,27 +1879,43 @@ function stopKinematicsRecording() {
     }
   };
 
-  // Prepend new run to history
+  // Prepend new run to history and save
   kinRunsHistory.unshift(newRun);
-  kinExpandedTables.add(runId); // auto-expand newest run table
   saveKinematicsRunsToStorage();
+  kinCurrentPage = 1; // reset to first page so new run is instantly in view
   renderKinematicsRuns();
+
+  // Directly open the modal table dialog for this newly recorded record!
+  openKinRunModal(runId);
 }
 
 function renderKinematicsRuns() {
   const container = document.getElementById('kinRunsList');
   const countBadge = document.getElementById('kinRunsCountBadge');
+  const paginationBar = document.getElementById('kinPaginationBar');
+  const paginationInfo = document.getElementById('kinPaginationInfo');
+  const btnPrev = document.getElementById('btnKinPrevPage');
+  const btnNext = document.getElementById('btnKinNextPage');
   if (!container) return;
 
-  const filteredRuns = kinRunsFilter === 'all'
-    ? kinRunsHistory
+  // 1. Filter
+  let runs = kinRunsFilter === 'all'
+    ? [...kinRunsHistory]
     : kinRunsHistory.filter(r => r.maneuver === currentManeuverKey);
 
-  if (countBadge) {
-    countBadge.textContent = `${filteredRuns.length} Run${filteredRuns.length === 1 ? '' : 's'}`;
+  // 2. Sort by Latest or Oldest
+  if (kinRunsSortOrder === 'oldest') {
+    runs.sort((a, b) => a.startTime - b.startTime);
+  } else {
+    runs.sort((a, b) => b.startTime - a.startTime);
   }
 
-  if (filteredRuns.length === 0) {
+  const totalRuns = runs.length;
+  if (countBadge) {
+    countBadge.textContent = `${totalRuns} Run${totalRuns === 1 ? '' : 's'}`;
+  }
+
+  if (totalRuns === 0) {
     const curName = KINEMATIC_MANEUVERS[currentManeuverKey]?.name || 'this maneuver';
     container.innerHTML = `
       <div class="kin-empty-state">
@@ -1835,14 +1929,23 @@ function renderKinematicsRuns() {
         <p>Click "Start Recording", move the device to mimic ${escapeHtml(curName)}, then click "Stop & Save Run" to generate your tabular dataset.</p>
       </div>
     `;
+    if (paginationBar) paginationBar.style.display = 'none';
     return;
   }
 
-  container.innerHTML = filteredRuns.map(run => {
+  // 3. Pagination calculations
+  const totalPages = Math.max(1, Math.ceil(totalRuns / kinRunsPerPage));
+  if (kinCurrentPage > totalPages) kinCurrentPage = totalPages;
+  if (kinCurrentPage < 1) kinCurrentPage = 1;
+
+  const startIdx = (kinCurrentPage - 1) * kinRunsPerPage;
+  const pagedRuns = runs.slice(startIdx, startIdx + kinRunsPerPage);
+
+  // Render individual run cards with dedicated "Open Record Table" modal triggers
+  container.innerHTML = pagedRuns.map(run => {
     const d = new Date(run.startTime);
     const dateFormatted = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     const timeFormatted = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const isExpanded = kinExpandedTables.has(run.id);
 
     return `
       <div class="kin-run-card" id="runCard_${run.id}">
@@ -1877,16 +1980,16 @@ function renderKinematicsRuns() {
           </div>
         </div>
 
-        <!-- Actions Row -->
+        <!-- Actions Row: Modal Table Trigger, CSV Export, Delete Authority -->
         <div class="kin-run-actions-row">
-          <button class="btn-toggle-table" onclick="toggleRunTable('${run.id}')">
+          <button class="btn-toggle-table" onclick="openKinRunModal('${run.id}')" title="Open full tabular log dialog">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
               <line x1="3" y1="9" x2="21" y2="9"></line>
               <line x1="3" y1="15" x2="21" y2="15"></line>
               <line x1="9" y1="3" x2="9" y2="21"></line>
             </svg>
-            <span id="toggleText_${run.id}">${isExpanded ? 'Hide Table Log' : `View Table Log (${run.samples.length} rows)`}</span>
+            <span>Open Record Table (${run.samples.length} rows)</span>
           </button>
 
           <div class="run-action-btns">
@@ -1907,72 +2010,98 @@ function renderKinematicsRuns() {
             </button>
           </div>
         </div>
-
-        <!-- Expandable Tabular Log -->
-        <div id="tableWrapper_${run.id}" class="kin-table-wrapper ${isExpanded ? '' : 'hidden'}">
-          <table class="kin-data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Rel Time</th>
-                <th>Timestamp</th>
-                <th>Ax (Vert)</th>
-                <th>Ay (Lat)</th>
-                <th>Az (Long)</th>
-                <th>Pitch</th>
-                <th>Roll</th>
-                <th>Tilt</th>
-                <th>Speed</th>
-                <th>Dynamic State</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${run.samples.map(s => `
-                <tr>
-                  <td>${s.num}</td>
-                  <td>+${s.relTimeSec.toFixed(2)}s</td>
-                  <td>${escapeHtml(s.timeStr)}</td>
-                  <td>${(s.ax >= 0 ? '+' : '') + s.ax.toFixed(2)}g</td>
-                  <td>${(s.ay >= 0 ? '+' : '') + s.ay.toFixed(2)}g</td>
-                  <td>${(s.az >= 0 ? '+' : '') + s.az.toFixed(2)}g</td>
-                  <td>${(s.pitch >= 0 ? '+' : '') + s.pitch.toFixed(1)}°</td>
-                  <td>${(s.roll >= 0 ? '+' : '') + s.roll.toFixed(1)}°</td>
-                  <td>${s.tilt.toFixed(1)}°</td>
-                  <td>${s.speed.toFixed(1)} km/h</td>
-                  <td><span class="tag-pill ${escapeHtml(s.tagCls || 'tag-steady')}">${escapeHtml(s.tagText || 'STEADY')}</span></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
       </div>
     `;
   }).join('');
+
+  // Update Pagination Controls
+  if (paginationBar) {
+    paginationBar.style.display = totalRuns > kinRunsPerPage ? 'flex' : 'none';
+    if (paginationInfo) {
+      paginationInfo.textContent = `Page ${kinCurrentPage} of ${totalPages} (${totalRuns} runs)`;
+    }
+    if (btnPrev) btnPrev.disabled = (kinCurrentPage <= 1);
+    if (btnNext) btnNext.disabled = (kinCurrentPage >= totalPages);
+  }
 }
 
-function toggleRunTable(runId) {
-  const wrapper = document.getElementById(`tableWrapper_${runId}`);
-  const toggleText = document.getElementById(`toggleText_${runId}`);
-  if (!wrapper) return;
+function openKinRunModal(runId) {
+  const run = kinRunsHistory.find(r => r.id === runId);
+  if (!run) return;
 
-  const isHidden = wrapper.classList.toggle('hidden');
-  if (isHidden) {
-    kinExpandedTables.delete(runId);
-    if (toggleText) {
-      const run = kinRunsHistory.find(r => r.id === runId);
-      toggleText.textContent = `View Table Log (${run ? run.samples.length : 0} rows)`;
-    }
-  } else {
-    kinExpandedTables.add(runId);
-    if (toggleText) toggleText.textContent = 'Hide Table Log';
+  activeModalRunId = runId;
+  const modal = document.getElementById('kinTableModal');
+  const subEl = document.getElementById('kinModalSub');
+  const titleEl = document.getElementById('kinModalTitle');
+  const statBar = document.getElementById('kinModalStatGrid');
+  const tbody = document.getElementById('kinModalTableBody');
+  const noteEl = document.getElementById('kinModalSampleCountNote');
+
+  const d = new Date(run.startTime);
+  const dateFormatted = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const timeFormatted = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  if (subEl) subEl.textContent = `${escapeHtml(run.maneuverTitle || run.maneuver).toUpperCase()} • ${dateFormatted} at ${timeFormatted}`;
+  if (titleEl) titleEl.textContent = `${run.maneuverTitle || run.maneuver} Telemetry Run (${run.durationSec}s)`;
+  if (noteEl) noteEl.textContent = `Total samples: ${run.samples.length} rows | Duration: ${run.durationSec}s`;
+
+  if (statBar) {
+    statBar.innerHTML = `
+      <div class="kin-stat-item">
+        <span class="kin-stat-key">PITCH PEAK / MIN</span>
+        <span class="kin-stat-val">${(run.summary.maxPitch >= 0 ? '+' : '') + run.summary.maxPitch.toFixed(1)}° / ${(run.summary.minPitch >= 0 ? '+' : '') + run.summary.minPitch.toFixed(1)}°</span>
+      </div>
+      <div class="kin-stat-item">
+        <span class="kin-stat-key">ROLL PEAK / MIN</span>
+        <span class="kin-stat-val">${(run.summary.maxRoll >= 0 ? '+' : '') + run.summary.maxRoll.toFixed(1)}° / ${(run.summary.minRoll >= 0 ? '+' : '') + run.summary.minRoll.toFixed(1)}°</span>
+      </div>
+      <div class="kin-stat-item">
+        <span class="kin-stat-key">AX VERT / AZ LONG</span>
+        <span class="kin-stat-val">${(run.summary.maxAx >= 0 ? '+' : '') + run.summary.maxAx.toFixed(2)}g / ${(run.summary.minAz >= 0 ? '+' : '') + run.summary.minAz.toFixed(2)}g</span>
+      </div>
+      <div class="kin-stat-item">
+        <span class="kin-stat-key">PEAK SPEED</span>
+        <span class="kin-stat-val">${run.summary.maxSpeed.toFixed(1)} km/h</span>
+      </div>
+    `;
   }
+
+  if (tbody) {
+    tbody.innerHTML = run.samples.map(s => `
+      <tr>
+        <td>${s.num}</td>
+        <td>+${s.relTimeSec.toFixed(2)}s</td>
+        <td>${escapeHtml(s.timeStr)}</td>
+        <td>${(s.ax >= 0 ? '+' : '') + s.ax.toFixed(2)}g</td>
+        <td>${(s.ay >= 0 ? '+' : '') + s.ay.toFixed(2)}g</td>
+        <td>${(s.az >= 0 ? '+' : '') + s.az.toFixed(2)}g</td>
+        <td>${(s.pitch >= 0 ? '+' : '') + s.pitch.toFixed(1)}°</td>
+        <td>${(s.roll >= 0 ? '+' : '') + s.roll.toFixed(1)}°</td>
+        <td>${s.tilt.toFixed(1)}°</td>
+        <td>${s.speed.toFixed(1)} km/h</td>
+        <td><span class="tag-pill ${escapeHtml(s.tagCls || 'tag-steady')}">${escapeHtml(s.tagText || 'STEADY')}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  if (modal) {
+    modal.classList.remove('hidden');
+  }
+}
+
+function closeKinRunModal() {
+  const modal = document.getElementById('kinTableModal');
+  if (modal) modal.classList.add('hidden');
+  activeModalRunId = null;
 }
 
 function deleteKinematicsRun(runId) {
   if (!confirm("Are you sure you want to delete this recorded test run?")) return;
   kinRunsHistory = kinRunsHistory.filter(r => r.id !== runId);
-  kinExpandedTables.delete(runId);
   saveKinematicsRunsToStorage();
+  if (activeModalRunId === runId) {
+    closeKinRunModal();
+  }
   renderKinematicsRuns();
 }
 
@@ -2062,24 +2191,34 @@ function clearAllKinematicsRuns() {
   }
   if (!confirm("Are you sure you want to permanently delete ALL recorded test runs? This cannot be undone.")) return;
   kinRunsHistory = [];
-  kinExpandedTables.clear();
+  closeKinRunModal();
   saveKinematicsRunsToStorage();
+  kinCurrentPage = 1;
   renderKinematicsRuns();
 }
 
 // Expose action handlers on window for HTML onclick compatibility
-window.toggleRunTable = toggleRunTable;
+window.openKinRunModal = openKinRunModal;
+window.closeKinRunModal = closeKinRunModal;
 window.exportSingleRunCSV = exportSingleRunCSV;
 window.deleteKinematicsRun = deleteKinematicsRun;
 
 function setupKinematicsEventListeners() {
-  // Maneuver pill clicks
+  // Maneuver pill clicks on desktop
   document.querySelectorAll('.kin-cat-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const m = btn.getAttribute('data-maneuver');
       selectKinematicsManeuver(m);
     });
   });
+
+  // Maneuver dropdown change on mobile
+  const mobileSelect = document.getElementById('kinMobileSelect');
+  if (mobileSelect) {
+    mobileSelect.addEventListener('change', (e) => {
+      selectKinematicsManeuver(e.target.value);
+    });
+  }
 
   // Toggle record button
   const btnToggleRecord = document.getElementById('btnToggleKinRecord');
@@ -2102,6 +2241,7 @@ function setupKinematicsEventListeners() {
       kinRunsFilter = 'current';
       btnFilterCurrent.classList.add('active');
       if (btnFilterAll) btnFilterAll.classList.remove('active');
+      kinCurrentPage = 1;
       renderKinematicsRuns();
     });
   }
@@ -2111,9 +2251,62 @@ function setupKinematicsEventListeners() {
       kinRunsFilter = 'all';
       btnFilterAll.classList.add('active');
       if (btnFilterCurrent) btnFilterCurrent.classList.remove('active');
+      kinCurrentPage = 1;
       renderKinematicsRuns();
     });
   }
+
+  // Sorting filter dropdown: Latest vs Oldest
+  const sortSelect = document.getElementById('kinSortSelect');
+  if (sortSelect) {
+    sortSelect.addEventListener('change', (e) => {
+      kinRunsSortOrder = e.target.value;
+      kinCurrentPage = 1;
+      renderKinematicsRuns();
+    });
+  }
+
+  // Pagination buttons: Previous & Next
+  const btnPrev = document.getElementById('btnKinPrevPage');
+  const btnNext = document.getElementById('btnKinNextPage');
+
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      if (kinCurrentPage > 1) {
+        kinCurrentPage--;
+        renderKinematicsRuns();
+      }
+    });
+  }
+
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      kinCurrentPage++;
+      renderKinematicsRuns();
+    });
+  }
+
+  // Modal Table close handlers
+  const btnCloseModal = document.getElementById('btnCloseKinTableModal');
+  const btnDismissModal = document.getElementById('btnDismissKinTableModal');
+  const modalBackdrop = document.getElementById('kinTableModalBackdrop');
+  const btnModalExportCSV = document.getElementById('btnModalExportCSV');
+
+  if (btnCloseModal) btnCloseModal.addEventListener('click', closeKinRunModal);
+  if (btnDismissModal) btnDismissModal.addEventListener('click', closeKinRunModal);
+  if (modalBackdrop) modalBackdrop.addEventListener('click', closeKinRunModal);
+
+  if (btnModalExportCSV) {
+    btnModalExportCSV.addEventListener('click', () => {
+      if (activeModalRunId) exportSingleRunCSV(activeModalRunId);
+    });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && activeModalRunId) {
+      closeKinRunModal();
+    }
+  });
 
   // Global action buttons: Export all & Clear all
   const btnExportAll = document.getElementById('btnExportAllKinematics');
@@ -2154,6 +2347,7 @@ function initKinematicsLab() {
   loadKinematicsRunsFromStorage();
   selectKinematicsManeuver('speed_breaker');
   setupKinematicsEventListeners();
+  updateKinematicsStandbyStatus();
   renderKinematicsRuns();
 }
 

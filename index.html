@@ -573,41 +573,64 @@
             </div>
           </div>
 
-          <!-- Maneuver Category Switcher Pills (Horizontal Scroll on Mobile) -->
-          <div class="kin-categories-scroll">
-            <div class="kin-categories-nav">
-              <button class="kin-cat-btn active" data-maneuver="speed_breaker">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12c3-6 6-6 9 0s6 6 9 0"/></svg>
-                <span>Speed Breaker</span>
-              </button>
-              <button class="kin-cat-btn" data-maneuver="pothole">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 4 4 4-4"/></svg>
-                <span>Pothole / Dip</span>
-              </button>
-              <button class="kin-cat-btn" data-maneuver="forward">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-                <span>Forward Move</span>
-              </button>
-              <button class="kin-cat-btn" data-maneuver="backward">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
-                <span>Backward Move</span>
-              </button>
-              <button class="kin-cat-btn" data-maneuver="right_turn">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="10 9 15 4 20 9"/><path d="M4 20h7a4 4 0 0 0 4-4V4"/></svg>
-                <span>Right Turn</span>
-              </button>
-              <button class="kin-cat-btn" data-maneuver="left_turn">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="14 9 9 4 4 9"/><path d="M20 20h-7a4 4 0 0 1-4-4V4"/></svg>
-                <span>Left Turn</span>
-              </button>
-              <button class="kin-cat-btn" data-maneuver="hard_brake">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                <span>Hard Braking</span>
-              </button>
-              <button class="kin-cat-btn" data-maneuver="overspeeding">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span>Overspeeding</span>
-              </button>
+          <!-- Maneuver Selector: Mobile Dropdown & Desktop Switcher Pills -->
+          <div class="kin-selector-wrapper">
+            <!-- Mobile Select Dropdown (visible on screens < 768px) -->
+            <div class="kin-mobile-select-wrap">
+              <label for="kinMobileSelect" class="kin-mobile-select-label">Select Maneuver:</label>
+              <div class="kin-select-box">
+                <select id="kinMobileSelect" class="kin-select-input">
+                  <option value="speed_breaker">Speed Breaker</option>
+                  <option value="pothole">Pothole / Dip</option>
+                  <option value="forward">Forward Move</option>
+                  <option value="backward">Backward Move</option>
+                  <option value="right_turn">Right Turn</option>
+                  <option value="left_turn">Left Turn</option>
+                  <option value="hard_brake">Hard Braking</option>
+                  <option value="overspeeding">Overspeeding</option>
+                </select>
+                <svg class="kin-select-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </div>
+            </div>
+
+            <!-- Desktop Maneuver Switcher Pills (visible on screens >= 768px) -->
+            <div class="kin-categories-scroll">
+              <div class="kin-categories-nav">
+                <button class="kin-cat-btn active" data-maneuver="speed_breaker">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12c3-6 6-6 9 0s6 6 9 0"/></svg>
+                  <span>Speed Breaker</span>
+                </button>
+                <button class="kin-cat-btn" data-maneuver="pothole">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 4 4 4-4"/></svg>
+                  <span>Pothole / Dip</span>
+                </button>
+                <button class="kin-cat-btn" data-maneuver="forward">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  <span>Forward Move</span>
+                </button>
+                <button class="kin-cat-btn" data-maneuver="backward">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                  <span>Backward Move</span>
+                </button>
+                <button class="kin-cat-btn" data-maneuver="right_turn">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="10 9 15 4 20 9"/><path d="M4 20h7a4 4 0 0 0 4-4V4"/></svg>
+                  <span>Right Turn</span>
+                </button>
+                <button class="kin-cat-btn" data-maneuver="left_turn">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="14 9 9 4 4 9"/><path d="M20 20h-7a4 4 0 0 1-4-4V4"/></svg>
+                  <span>Left Turn</span>
+                </button>
+                <button class="kin-cat-btn" data-maneuver="hard_brake">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <span>Hard Braking</span>
+                </button>
+                <button class="kin-cat-btn" data-maneuver="overspeeding">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  <span>Overspeeding</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -693,14 +716,28 @@
                 <h3>Recorded Test Runs</h3>
                 <span id="kinRunsCountBadge" class="runs-count-pill">0 Runs</span>
               </div>
-              <div class="runs-filter-group">
-                <button id="btnFilterCurrentManeuver" class="pill-filter active">Current Maneuver</button>
-                <button id="btnFilterAllManeuvers" class="pill-filter">All Maneuvers</button>
+              <div class="runs-controls-group">
+                <div class="runs-filter-group">
+                  <button id="btnFilterCurrentManeuver" class="pill-filter active">Current Maneuver</button>
+                  <button id="btnFilterAllManeuvers" class="pill-filter">All Maneuvers</button>
+                </div>
+                <div class="runs-sort-group">
+                  <label for="kinSortSelect" class="sort-label">Sort:</label>
+                  <div class="sort-select-box">
+                    <select id="kinSortSelect" class="kin-sort-select">
+                      <option value="latest">Latest First</option>
+                      <option value="oldest">Oldest First</option>
+                    </select>
+                    <svg class="sort-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div id="kinRunsList" class="kin-runs-container">
-              <!-- Dynamically populated runs list with embedded expandable sample tables -->
+              <!-- Dynamically populated run cards -->
               <div class="kin-empty-state">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -710,6 +747,83 @@
                 </svg>
                 <h4>No Recorded Runs for this Maneuver Yet</h4>
                 <p>Click "Start Recording", move the device to mimic the maneuver, then click "Stop & Save Run" to generate your tabular dataset.</p>
+              </div>
+            </div>
+
+            <!-- Pagination Controls -->
+            <div id="kinPaginationBar" class="kin-pagination-bar">
+              <button id="btnKinPrevPage" class="btn-pagination" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                <span>Previous</span>
+              </button>
+              <span id="kinPaginationInfo" class="pagination-info">Page 1 of 1</span>
+              <button id="btnKinNextPage" class="btn-pagination" disabled>
+                <span>Next</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Dedicated Modal for Kinematics Run Tabular Data -->
+          <div id="kinTableModal" class="trip-modal kin-table-modal hidden">
+            <div class="modal-backdrop" id="kinTableModalBackdrop"></div>
+            <div class="modal-card kin-table-modal-card">
+              <div class="modal-header">
+                <div class="modal-title-col">
+                  <span class="modal-sub" id="kinModalSub">RUN KINEMATICS DATA LOG</span>
+                  <h3 id="kinModalTitle">Run Data Table</h3>
+                </div>
+                <div class="kin-modal-header-actions">
+                  <button id="btnModalExportCSV" class="btn-run-action" title="Export this run to CSV">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    <span>CSV</span>
+                  </button>
+                  <button id="btnCloseKinTableModal" class="btn-close-modal" aria-label="Close Modal">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Modal Run Summary Banner -->
+              <div id="kinModalStatGrid" class="kin-run-stat-grid kin-modal-stat-bar">
+                <!-- Dynamically populated -->
+              </div>
+
+              <!-- Scrollable Table Viewport -->
+              <div class="kin-modal-table-viewport">
+                <table class="kin-data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Rel Time</th>
+                      <th>Timestamp</th>
+                      <th>Ax (Vert)</th>
+                      <th>Ay (Lat)</th>
+                      <th>Az (Long)</th>
+                      <th>Pitch</th>
+                      <th>Roll</th>
+                      <th>Tilt</th>
+                      <th>Speed</th>
+                      <th>Dynamic State</th>
+                    </tr>
+                  </thead>
+                  <tbody id="kinModalTableBody">
+                    <!-- Dynamically populated sample rows -->
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Modal Action Footer -->
+              <div class="modal-action-footer kin-modal-footer">
+                <span id="kinModalSampleCountNote" class="kin-modal-note">0 samples recorded</span>
+                <button id="btnDismissKinTableModal" class="btn-modal-action">Close Table</button>
               </div>
             </div>
           </div>

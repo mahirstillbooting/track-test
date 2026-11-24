@@ -2428,6 +2428,12 @@ html, body {
   border: 1px solid rgba(76, 175, 80, 0.35);
 }
 
+.link-status-badge.standby {
+  background: rgba(255, 183, 77, 0.15);
+  color: #ffb74d;
+  border-color: rgba(255, 183, 77, 0.35);
+}
+
 .kin-titles h2 {
   font-size: 1.45rem;
   font-weight: 800;
@@ -2489,7 +2495,58 @@ html, body {
   border-color: #ef5350;
 }
 
-/* Maneuver Horizontal Category Navigation */
+/* Maneuver Selector: Mobile Dropdown & Desktop Switcher Pills */
+.kin-selector-wrapper {
+  width: 100%;
+}
+
+.kin-mobile-select-wrap {
+  display: none;
+}
+
+.kin-mobile-select-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gm-text-muted);
+}
+
+.kin-select-box {
+  position: relative;
+  width: 100%;
+}
+
+.kin-select-input {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--gm-bg-surface);
+  border: 1px solid var(--gm-border);
+  border-radius: var(--radius-sm);
+  color: var(--gm-text-primary);
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 10px 38px 10px 14px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kin-select-input:focus {
+  outline: none;
+  border-color: var(--gm-accent);
+}
+
+.kin-select-chevron {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--gm-text-muted);
+}
+
+/* Maneuver Horizontal Category Navigation (Desktop) */
 .kin-categories-scroll {
   width: 100%;
   overflow-x: auto;
@@ -2550,7 +2607,7 @@ html, body {
 }
 
 .kin-stage-control-card {
-  background: linear-gradient(180deg, rgba(168, 199, 250, 0.04) 0%, var(--gm-bg-surface) 100%);
+  background: var(--gm-bg-surface);
 }
 
 .kin-stage-tag {
@@ -2603,6 +2660,7 @@ html, body {
   border-top: 1px solid var(--gm-border-subtle);
 }
 
+/* Start / Stop Recording Buttons (Solid Obsidian / Material styling - No gradients) */
 .btn-kin-record {
   display: inline-flex;
   align-items: center;
@@ -2612,46 +2670,59 @@ html, body {
   font-size: 0.9rem;
   font-weight: 800;
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  background-image: none !important;
+  box-shadow: none !important;
 }
 
 .btn-kin-record.idle {
   background: var(--gm-accent);
   color: #041c2c;
-  border: none;
-  box-shadow: 0 4px 16px rgba(168, 199, 250, 0.4);
+  border-color: var(--gm-accent);
 }
 
 .btn-kin-record.idle:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(168, 199, 250, 0.55);
+  background: #bed8fb;
+  border-color: #bed8fb;
+  transform: translateY(-1px);
 }
 
 .btn-kin-record.recording {
   background: #d32f2f;
   color: #ffffff;
-  border: 2px solid #ef5350;
-  box-shadow: 0 0 16px rgba(239, 83, 80, 0.6);
-  animation: recordPulseBorder 1.5s infinite;
+  border-color: #ef5350;
+  animation: none;
 }
 
-@keyframes recordPulseBorder {
-  0% { transform: scale(1); box-shadow: 0 0 10px rgba(239, 83, 80, 0.5); }
-  50% { transform: scale(1.02); box-shadow: 0 0 22px rgba(239, 83, 80, 0.85); }
-  100% { transform: scale(1); box-shadow: 0 0 10px rgba(239, 83, 80, 0.5); }
+.btn-kin-record.recording:hover {
+  background: #b71c1c;
+  border-color: #b71c1c;
+}
+
+.btn-kin-record.disabled-standby {
+  background: var(--gm-bg-canvas) !important;
+  color: var(--gm-text-muted) !important;
+  border: 1px solid var(--gm-border-subtle) !important;
+  cursor: not-allowed !important;
+  opacity: 0.65;
+  transform: none !important;
 }
 
 .record-orb {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: #d32f2f;
-  box-shadow: 0 0 8px #ef5350;
+  box-shadow: none !important;
 }
 
 .btn-kin-record.recording .record-orb {
   background: #ffffff;
-  box-shadow: 0 0 8px #ffffff;
+}
+
+.btn-kin-record.disabled-standby .record-orb {
+  background: #757575;
 }
 
 .kin-live-stats {
@@ -2935,6 +3006,145 @@ html, body {
   gap: 8px;
 }
 
+.runs-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.runs-sort-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sort-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--gm-text-muted);
+}
+
+.sort-select-box {
+  position: relative;
+}
+
+.kin-sort-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--gm-bg-canvas);
+  border: 1px solid var(--gm-border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--gm-text-primary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 6px 26px 6px 10px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kin-sort-select:focus {
+  outline: none;
+  border-color: var(--gm-accent);
+}
+
+.sort-chevron {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--gm-text-muted);
+}
+
+/* Pagination Bar */
+.kin-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 0 6px 0;
+  margin-top: 10px;
+}
+
+.btn-pagination {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--gm-bg-surface);
+  border: 1px solid var(--gm-border);
+  border-radius: var(--radius-sm);
+  color: var(--gm-text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-pagination:hover:not(:disabled) {
+  background: var(--gm-bg-hover);
+  border-color: var(--gm-accent);
+  color: var(--gm-accent);
+}
+
+.btn-pagination:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--gm-border-subtle);
+}
+
+.pagination-info {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--gm-text-secondary);
+  font-family: monospace;
+}
+
+/* Modal Table for Kinematics Record */
+.kin-table-modal-card {
+  max-width: 960px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.kin-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kin-modal-stat-bar {
+  margin: 12px 18px 0 18px;
+  border: 1px solid var(--gm-border-subtle);
+}
+
+.kin-modal-table-viewport {
+  margin: 12px 18px;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--gm-border);
+  border-radius: var(--radius-sm);
+  max-height: calc(88vh - 230px);
+  min-height: 200px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.kin-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-top: 1px solid var(--gm-border-subtle);
+}
+
+.kin-modal-note {
+  font-size: 0.76rem;
+  color: var(--gm-text-muted);
+  font-family: monospace;
+}
+
 .btn-toggle-table {
   display: inline-flex;
   align-items: center;
@@ -3066,6 +3276,46 @@ html, body {
 @media (max-width: 767px) {
   #viewKinematics {
     padding: 14px 14px calc(76px + env(safe-area-inset-bottom, 12px)) 14px;
+  }
+
+  .kin-mobile-select-wrap {
+    display: flex;
+  }
+
+  .kin-categories-scroll {
+    display: none !important;
+  }
+
+  .runs-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .runs-controls-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .runs-filter-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .kin-table-modal-card {
+    max-height: 94vh;
+    border-radius: var(--radius-md);
+  }
+
+  .kin-modal-table-viewport {
+    margin: 8px 12px;
+    max-height: calc(94vh - 220px);
+  }
+
+  .kin-modal-stat-bar {
+    margin: 8px 12px 0 12px;
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .kin-stage-grid {
