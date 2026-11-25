@@ -977,18 +977,41 @@ function renderTripsList(historyData) {
           <span>Points: <b>${ptsCount}</b></span>
           <span class="trip-date">${trip.formattedDate || ''}</span>
         </div>
-        <button class="btn-view-route" data-key="${key}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
-          </svg>
-          <span>View Route</span>
-        </button>
+        <div class="trip-footer-actions">
+          <button class="btn-view-route" data-key="${key}" title="View journey map route">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+            </svg>
+            <span>View Route</span>
+          </button>
+          <button class="btn-delete-trip" data-key="${key}" title="Delete this journey record">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </button>
+        </div>
       </div>
     `;
 
     card.querySelector('.btn-view-route').addEventListener('click', () => {
       openTripModal(key, trip);
     });
+
+    const btnDelete = card.querySelector('.btn-delete-trip');
+    if (btnDelete) {
+      btnDelete.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const confirmed = confirm("Are you sure you want to delete this recorded journey from the database?");
+        if (!confirmed) return;
+
+        db.ref('history/' + key).remove().then(() => {
+          // Deletion handled cleanly; Firebase realtime listener updates list automatically
+        }).catch(err => {
+          alert("Failed to delete journey: " + err.message);
+        });
+      });
+    }
 
     container.appendChild(card);
   });
@@ -1226,48 +1249,10 @@ function setAppMode(mode, triggeredByUser = false) {
   currentMode = mode;
   const btnRider = document.getElementById('btnRiderMode');
   const btnAdmin = document.getElementById('btnAdminMode');
-  const btnMobile = document.getElementById('btnMobileModeToggle');
-  const mobileLabel = document.getElementById('mobileModeLabel');
-  const mobileIconWrap = document.getElementById('mobileModeIconWrap');
-  const badgePulse = document.getElementById('mobileModeBadgePulse');
 
   if (btnRider && btnAdmin) {
     btnRider.classList.toggle('active', mode === 'rider');
     btnAdmin.classList.toggle('active', mode === 'admin');
-  }
-
-  if (btnMobile) {
-    btnMobile.classList.toggle('active', mode === 'admin');
-  }
-
-  if (badgePulse) {
-    badgePulse.classList.toggle('hidden', mode !== 'admin');
-  }
-
-  if (mobileLabel) {
-    mobileLabel.textContent = mode === 'admin' ? 'Admin' : 'Rider';
-  }
-
-  if (mobileIconWrap) {
-    mobileIconWrap.classList.remove('flip-effect');
-    void mobileIconWrap.offsetWidth; // trigger reflow for smooth animation
-    mobileIconWrap.classList.add('flip-effect');
-
-    if (mode === 'admin') {
-      mobileIconWrap.innerHTML = `
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-          <path d="m9 12 2 2 4-4"></path>
-        </svg>
-      `;
-    } else {
-      mobileIconWrap.innerHTML = `
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-          <circle cx="12" cy="7" r="4"></circle>
-        </svg>
-      `;
-    }
   }
 
   updateAdminRecordingUI();
@@ -1280,7 +1265,6 @@ function setAppMode(mode, triggeredByUser = false) {
 function setupModeSwitcher() {
   const btnRider = document.getElementById('btnRiderMode');
   const btnAdmin = document.getElementById('btnAdminMode');
-  const btnMobile = document.getElementById('btnMobileModeToggle');
 
   if (btnRider) {
     btnRider.addEventListener('click', () => setAppMode('rider', true));
@@ -1288,12 +1272,6 @@ function setupModeSwitcher() {
 
   if (btnAdmin) {
     btnAdmin.addEventListener('click', () => setAppMode('admin', true));
-  }
-
-  if (btnMobile) {
-    btnMobile.addEventListener('click', () => {
-      setAppMode(currentMode === 'rider' ? 'admin' : 'rider', true);
-    });
   }
 }
 
@@ -1652,6 +1630,10 @@ function selectKinematicsManeuver(key) {
     }
   }
 
+  try {
+    localStorage.setItem('chalok_kin_active_maneuver', key);
+  } catch (e) {}
+
   // If filter is set to current, reset pagination to page 1 and re-render
   if (kinRunsFilter === 'current') {
     kinCurrentPage = 1;
@@ -1917,18 +1899,35 @@ function renderKinematicsRuns() {
 
   if (totalRuns === 0) {
     const curName = KINEMATIC_MANEUVERS[currentManeuverKey]?.name || 'this maneuver';
-    container.innerHTML = `
-      <div class="kin-empty-state">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14 2 14 8 20 8"></polyline>
-          <line x1="16" y1="13" x2="8" y2="13"></line>
-          <line x1="16" y1="17" x2="8" y2="17"></line>
-        </svg>
-        <h4>No Recorded Runs for ${escapeHtml(curName)} Yet</h4>
-        <p>Click "Start Recording", move the device to mimic ${escapeHtml(curName)}, then click "Stop & Save Run" to generate your tabular dataset.</p>
-      </div>
-    `;
+    const totalRunsInHistory = kinRunsHistory.length;
+
+    if (kinRunsFilter === 'current' && totalRunsInHistory > 0) {
+      container.innerHTML = `
+        <div class="kin-empty-state">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <h4>No Recorded Runs for ${escapeHtml(curName)} Yet</h4>
+          <p>You have <strong>${totalRunsInHistory} run(s)</strong> saved in other maneuver categories. Click <strong>"All Maneuvers"</strong> above to view all runs, or record a new run for ${escapeHtml(curName)}.</p>
+        </div>
+      `;
+    } else {
+      container.innerHTML = `
+        <div class="kin-empty-state">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <h4>No Recorded Runs for ${escapeHtml(curName)} Yet</h4>
+          <p>Click "Start Recording", move the device to mimic ${escapeHtml(curName)}, then click "Stop & Save Run" to generate your tabular dataset.</p>
+        </div>
+      `;
+    }
     if (paginationBar) paginationBar.style.display = 'none';
     return;
   }
@@ -2241,6 +2240,7 @@ function setupKinematicsEventListeners() {
       kinRunsFilter = 'current';
       btnFilterCurrent.classList.add('active');
       if (btnFilterAll) btnFilterAll.classList.remove('active');
+      try { localStorage.setItem('chalok_kin_filter', 'current'); } catch (e) {}
       kinCurrentPage = 1;
       renderKinematicsRuns();
     });
@@ -2251,6 +2251,7 @@ function setupKinematicsEventListeners() {
       kinRunsFilter = 'all';
       btnFilterAll.classList.add('active');
       if (btnFilterCurrent) btnFilterCurrent.classList.remove('active');
+      try { localStorage.setItem('chalok_kin_filter', 'all'); } catch (e) {}
       kinCurrentPage = 1;
       renderKinematicsRuns();
     });
@@ -2318,34 +2319,27 @@ function setupKinematicsEventListeners() {
   if (btnClearAll) {
     btnClearAll.addEventListener('click', clearAllKinematicsRuns);
   }
-
-  // Optional mobile device motion fallback (e.g. testing in hand on mobile browser)
-  if (window.DeviceMotionEvent && typeof window.DeviceMotionEvent.requestPermission !== 'function') {
-    window.addEventListener('devicemotion', (e) => {
-      if (Date.now() - kinLastStreamTime > 10000 && e.accelerationIncludingGravity) {
-        const ag = e.accelerationIncludingGravity;
-        latestTelemSnapshot.ax = (ag.z || 9.8) / 9.80665;
-        latestTelemSnapshot.ay = (ag.x || 0) / 9.80665;
-        latestTelemSnapshot.az = (ag.y || 0) / 9.80665;
-        updateKinematicsHUDElements(latestTelemSnapshot);
-      }
-    });
-  }
-
-  if (window.DeviceOrientationEvent) {
-    window.addEventListener('deviceorientation', (e) => {
-      if (Date.now() - kinLastStreamTime > 10000) {
-        latestTelemSnapshot.pitch = e.beta || 0;
-        latestTelemSnapshot.roll = e.gamma || 0;
-        updateKinematicsHUDElements(latestTelemSnapshot);
-      }
-    });
-  }
 }
 
 function initKinematicsLab() {
   loadKinematicsRunsFromStorage();
-  selectKinematicsManeuver('speed_breaker');
+
+  let savedManeuver = 'speed_breaker';
+  let savedFilter = 'current';
+  try {
+    savedManeuver = localStorage.getItem('chalok_kin_active_maneuver') || 'speed_breaker';
+    savedFilter = localStorage.getItem('chalok_kin_filter') || 'current';
+  } catch (e) {}
+
+  kinRunsFilter = savedFilter;
+  const btnFilterCurrent = document.getElementById('btnFilterCurrentManeuver');
+  const btnFilterAll = document.getElementById('btnFilterAllManeuvers');
+  if (btnFilterCurrent && btnFilterAll) {
+    btnFilterCurrent.classList.toggle('active', kinRunsFilter === 'current');
+    btnFilterAll.classList.toggle('active', kinRunsFilter === 'all');
+  }
+
+  selectKinematicsManeuver(savedManeuver);
   setupKinematicsEventListeners();
   updateKinematicsStandbyStatus();
   renderKinematicsRuns();
