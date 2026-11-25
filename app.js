@@ -469,18 +469,29 @@ function setupFirebaseListeners() {
   });
 
   // B. Tracker Sharing Status (tracker/active)
+  let prevSharingActiveState = null;
   db.ref('tracker/active').on('value', (snap) => {
-    isSharingActive = (snap.val() === true);
+    const newSharingActive = (snap.val() === true);
+    const rideJustEnded = (prevSharingActiveState === true && !newSharingActive);
+    prevSharingActiveState = newSharingActive;
+    isSharingActive = newSharingActive;
     
     // Update Floating Ride Pill
     const sharingPill = document.getElementById('rideSharingBadge');
     const sharingLabel = document.getElementById('rideSharingLabel');
-    if (isSharingActive) {
-      sharingPill.className = 'sharing-pill active';
-      sharingLabel.textContent = 'SHARING ACTIVE';
-    } else {
-      sharingPill.className = 'sharing-pill stopped';
-      sharingLabel.textContent = 'STANDBY';
+    if (sharingPill && sharingLabel) {
+      if (isSharingActive) {
+        sharingPill.className = 'sharing-pill active';
+        sharingLabel.textContent = 'SHARING ACTIVE';
+      } else {
+        sharingPill.className = 'sharing-pill stopped';
+        sharingLabel.textContent = 'STANDBY';
+      }
+    }
+
+    // When ride ends (device stops sharing or goes standby), immediately halt active recording
+    if (rideJustEnded) {
+      handleRideEnded();
     }
 
     // Refresh Admin Journey Recording State & Last Recorded Display
@@ -633,11 +644,82 @@ function setupFirebaseListeners() {
 // =============================================================================
 // ADMIN JOURNEY RECORDING WORKFLOW
 // =============================================================================
+function handleRideEnded() {
+  // If an admin trip recording session was active when the ride ended:
+  if (isRecordingTrip) {
+    clearInterval(tripSession.timerInterval);
+    const ptsCount = tripSession.points.length;
+    
+    // Auto-save the completed ride if sufficient points were collected
+    if (ptsCount >= 2) {
+      const durationSeconds = Math.max(1, Math.floor((Date.now() - tripSession.startTime) / 1000));
+      const distanceKm = parseFloat((tripSession.totalDistMeters / 1000).toFixed(2));
+      const now = new Date();
+      const dateFormatted = now.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+      const timeFormatted = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const tripRecord = {
+        title: `Ride on ${dateFormatted} at ${timeFormatted}`,
+        savedAt: firebase.database.ServerValue.TIMESTAMP,
+        formattedDate: `${dateFormatted}, ${timeFormatted}`,
+        distanceKm: distanceKm,
+        durationSeconds: durationSeconds,
+        durationFormatted: formatDuration(durationSeconds),
+        pointsCount: ptsCount,
+        startCoords: tripSession.points[0] || { lat: 0, lng: 0 },
+        endCoords: tripSession.points[ptsCount - 1] || { lat: 0, lng: 0 },
+        points: tripSession.points
+      };
+
+      // Reset recording state immediately so active recorder never lingers
+      isRecordingTrip = false;
+      tripSession.points = [];
+      tripSession.totalDistMeters = 0;
+      tripSession.lastRecordedCoord = null;
+      if (activeRecordingPolyline && map) {
+        map.removeLayer(activeRecordingPolyline);
+        activeRecordingPolyline = null;
+      }
+      const timerEl = document.getElementById('recordingTimer');
+      if (timerEl) timerEl.textContent = "00:00:00";
+
+      db.ref('history').push(tripRecord).then(() => {
+        reloadJourneysPage();
+      }).catch(err => {
+        console.error("Auto-save on ride end failed:", err);
+        reloadJourneysPage();
+      });
+    } else {
+      // Discard incomplete session
+      isRecordingTrip = false;
+      tripSession.points = [];
+      tripSession.totalDistMeters = 0;
+      tripSession.lastRecordedCoord = null;
+      if (activeRecordingPolyline && map) {
+        map.removeLayer(activeRecordingPolyline);
+        activeRecordingPolyline = null;
+      }
+      const timerEl = document.getElementById('recordingTimer');
+      if (timerEl) timerEl.textContent = "00:00:00";
+    }
+  }
+
+  // Ensure recording UI is cleared and journeys page reloaded
+  updateAdminRecordingUI();
+  reloadJourneysPage();
+}
+
 function updateAdminRecordingUI() {
   const adminRecordingBar = document.getElementById('adminRecordingBar');
   const warningBox = document.getElementById('adminSharingWarning');
   const readyBox = document.getElementById('adminReadyBox');
   const recordingBox = document.getElementById('adminRecordingBox');
+
+  if (!adminRecordingBar) return;
 
   // Only visible when currentMode === 'admin'
   if (currentMode !== 'admin') {
@@ -646,23 +728,19 @@ function updateAdminRecordingUI() {
   }
   adminRecordingBar.classList.remove('hidden');
 
-  // Validation: Is device actively sharing location?
+  // Validation: When device is NOT sharing (ride ended or in standby), NEVER show active recorder
   if (!isSharingActive) {
-    warningBox.classList.remove('hidden');
-    readyBox.classList.add('hidden');
-    recordingBox.classList.add('hidden');
-    
-    if (isRecordingTrip) {
-      recordingBox.classList.remove('hidden');
-    }
+    if (warningBox) warningBox.classList.remove('hidden');
+    if (readyBox) readyBox.classList.add('hidden');
+    if (recordingBox) recordingBox.classList.add('hidden');
   } else {
-    warningBox.classList.add('hidden');
+    if (warningBox) warningBox.classList.add('hidden');
     if (isRecordingTrip) {
-      readyBox.classList.add('hidden');
-      recordingBox.classList.remove('hidden');
+      if (readyBox) readyBox.classList.add('hidden');
+      if (recordingBox) recordingBox.classList.remove('hidden');
     } else {
-      readyBox.classList.remove('hidden');
-      recordingBox.classList.add('hidden');
+      if (readyBox) readyBox.classList.remove('hidden');
+      if (recordingBox) recordingBox.classList.add('hidden');
     }
   }
 }
@@ -771,7 +849,7 @@ function setupAdminRecordingControls() {
     }
 
     clearInterval(tripSession.timerInterval);
-    const durationSeconds = Math.floor((Date.now() - tripSession.startTime) / 1000);
+    const durationSeconds = Math.max(1, Math.floor((Date.now() - tripSession.startTime) / 1000));
     const distanceKm = parseFloat((tripSession.totalDistMeters / 1000).toFixed(2));
     const now = new Date();
 
@@ -795,27 +873,30 @@ function setupAdminRecordingControls() {
       points: tripSession.points
     };
 
-    // Save to Firebase RTDB under /history
-    db.ref('history').push(tripRecord).then(() => {
-      alert(`Journey successfully saved!\nTotal Distance: ${distanceKm} km\nDuration: ${formatDuration(durationSeconds)}`);
-      
-      // Clean up local recording state
-      isRecordingTrip = false;
-      tripSession.points = [];
-      tripSession.totalDistMeters = 0;
-      tripSession.lastRecordedCoord = null;
-      if (activeRecordingPolyline) {
-        map.removeLayer(activeRecordingPolyline);
-        activeRecordingPolyline = null;
-      }
-      timerEl.textContent = "00:00:00";
-      updateAdminRecordingUI();
+    // 1. Reset recording state immediately so active recorder disappears instantly
+    isRecordingTrip = false;
+    tripSession.points = [];
+    tripSession.totalDistMeters = 0;
+    tripSession.lastRecordedCoord = null;
+    if (activeRecordingPolyline && map) {
+      map.removeLayer(activeRecordingPolyline);
+      activeRecordingPolyline = null;
+    }
+    if (timerEl) timerEl.textContent = "00:00:00";
+    updateAdminRecordingUI();
 
-      // Automatically switch to Trips History view
-      switchView('viewTrips');
+    // 2. Save to Firebase RTDB under /history
+    db.ref('history').push(tripRecord).then(() => {
+      // 3. Reload journeys page with fresh database data and open Journeys view
+      reloadJourneysPage().then(() => {
+        switchView('viewTrips');
+      });
     }).catch(err => {
       console.error("Error saving trip:", err);
       alert("Failed to save trip to database: " + err.message);
+      reloadJourneysPage().then(() => {
+        switchView('viewTrips');
+      });
     });
   });
 
@@ -827,12 +908,13 @@ function setupAdminRecordingControls() {
       tripSession.points = [];
       tripSession.totalDistMeters = 0;
       tripSession.lastRecordedCoord = null;
-      if (activeRecordingPolyline) {
+      if (activeRecordingPolyline && map) {
         map.removeLayer(activeRecordingPolyline);
         activeRecordingPolyline = null;
       }
-      timerEl.textContent = "00:00:00";
+      if (timerEl) timerEl.textContent = "00:00:00";
       updateAdminRecordingUI();
+      reloadJourneysPage();
     }
   });
 }
@@ -847,12 +929,27 @@ function formatDuration(totalSeconds) {
 // =============================================================================
 // TRIP HISTORY RENDERING & CLEAR HISTORY TOOL
 // =============================================================================
+function reloadJourneysPage() {
+  return db.ref('history').once('value').then(snap => {
+    tripsHistoryCache = snap.val() || {};
+    renderTripsList(tripsHistoryCache);
+    return tripsHistoryCache;
+  }).catch(err => {
+    console.warn("Reload journeys failed, using cache:", err);
+    renderTripsList(tripsHistoryCache);
+    return tripsHistoryCache;
+  });
+}
+
 function renderTripsList(historyData) {
   const container = document.getElementById('tripsList');
+  if (!container) return;
   container.innerHTML = '';
 
   const keys = Object.keys(historyData || {});
-  if (keys.length === 0) {
+  const shouldShowActiveCard = isRecordingTrip && isSharingActive;
+
+  if (keys.length === 0 && !shouldShowActiveCard) {
     container.innerHTML = `
       <div class="empty-trips-state">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -866,8 +963,8 @@ function renderTripsList(historyData) {
     return;
   }
 
-  // Active orders section (if currently recording)
-  if (isRecordingTrip) {
+  // Active orders section (ONLY when currently recording AND ride is actively sharing)
+  if (shouldShowActiveCard) {
     const activeHeader = document.createElement('div');
     activeHeader.className = 'trips-section-title';
     activeHeader.textContent = 'Active orders';
@@ -1181,6 +1278,11 @@ function switchView(targetViewId) {
   if (targetViewId === 'viewRide' && map) {
     setTimeout(ensureMapRender, 50);
     setTimeout(ensureMapRender, 200);
+  }
+
+  // Reload journeys list fresh when switching to Trips History
+  if (targetViewId === 'viewTrips') {
+    reloadJourneysPage();
   }
 }
 
