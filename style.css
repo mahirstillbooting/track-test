@@ -712,28 +712,93 @@ html, body {
   }
 
   .floating-top-bar {
-    top: 10px;
-    left: 10px;
-    gap: 6px;
-    max-width: calc(100% - 110px);
+    top: 8px;
+    left: 8px;
+    gap: 5px;
+    max-width: calc(100% - 95px);
   }
 
   .sharing-pill {
-    padding: 5px 10px;
-    font-size: 0.7rem;
+    padding: 4px 8px;
+    font-size: 0.62rem;
   }
 
   .recorded-pill {
-    padding: 5px 10px;
-    font-size: 0.68rem;
+    padding: 4px 8px;
+    font-size: 0.60rem;
   }
 
   .floating-recenter-btn {
-    bottom: 10px;
-    right: 10px;
+    bottom: 8px;
+    right: 8px;
+    padding: 5px 10px;
+    font-size: 0.68rem;
+    gap: 4px;
+  }
+
+  .admin-bar-title span {
+    font-size: 0.62rem;
+    letter-spacing: 0.5px;
+  }
+
+  .ready-text {
+    font-size: 0.70rem;
+  }
+
+  .btn-gm-primary, .btn-gm-danger, .btn-gm-ghost {
+    font-size: 0.70rem;
     padding: 6px 12px;
-    font-size: 0.74rem;
-    gap: 5px;
+  }
+
+  .recording-pulse-tag {
+    font-size: 0.62rem;
+    padding: 3px 7px;
+  }
+
+  .trip-timer {
+    font-size: 1.05rem;
+  }
+
+  .live-stat-box .stat-caption {
+    font-size: 0.58rem;
+  }
+
+  .live-stat-box .stat-number {
+    font-size: 0.80rem;
+  }
+
+  .metric-top-label {
+    font-size: 0.60rem;
+    letter-spacing: 0.4px;
+  }
+
+  .metric-hero-val {
+    font-size: 1.15rem;
+  }
+
+  .metric-hero-val .unit {
+    font-size: 0.68rem;
+  }
+
+  .metric-hint {
+    font-size: 0.60rem;
+  }
+
+  .accel-chip, .coord-chip {
+    padding: 3px 6px;
+  }
+
+  .chip-axis {
+    font-size: 0.56rem;
+  }
+
+  .chip-val {
+    font-size: 0.68rem;
+  }
+
+  .pill-calc {
+    font-size: 0.56rem;
+    padding: 2px 5px;
   }
 
   .ride-controls-panel {
@@ -1429,6 +1494,187 @@ html, body {
   .trips-list {
     grid-template-columns: repeat(3, 1fr);
   }
+}
+
+/* =============================================================================
+   TRIPS SEARCH & MINIMAL SORT TOOLBAR
+   ============================================================================= */
+.trips-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  width: 100%;
+}
+
+.trips-search-box {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.trips-search-box .search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--gm-text-secondary);
+  pointer-events: none;
+}
+
+.trips-search-input {
+  width: 100%;
+  padding: 8px 34px 8px 34px;
+  background: var(--gm-bg-surface);
+  border: 1px solid var(--gm-border);
+  border-radius: var(--radius-sm);
+  color: var(--gm-text-primary);
+  font-size: 0.8rem;
+  outline: none;
+  transition: var(--transition);
+}
+
+.trips-search-input:focus {
+  border-color: var(--gm-accent);
+  box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.12);
+}
+
+.btn-clear-search {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--gm-text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: var(--transition);
+}
+
+.btn-clear-search:hover {
+  color: var(--gm-text-primary);
+  background: var(--gm-bg-hover);
+}
+
+.btn-clear-search.hidden {
+  display: none !important;
+}
+
+.trips-sort-box {
+  flex-shrink: 0;
+}
+
+.btn-sort-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--gm-bg-surface);
+  border: 1px solid var(--gm-border);
+  border-radius: var(--radius-sm);
+  color: var(--gm-text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-sort-toggle:hover {
+  background: var(--gm-bg-hover);
+  border-color: var(--gm-accent);
+  color: var(--gm-accent);
+}
+
+.btn-sort-toggle .sort-icon {
+  color: var(--gm-accent);
+}
+
+/* Optional Journey Small Title Input in Admin Bar */
+.recording-title-row {
+  margin: 6px 0 10px 0;
+}
+
+.title-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.title-input-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--gm-text-secondary);
+  pointer-events: none;
+}
+
+.trip-title-input {
+  width: 100%;
+  padding: 7px 10px 7px 30px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--gm-border);
+  border-radius: var(--radius-sm);
+  color: var(--gm-text-primary);
+  font-size: 0.78rem;
+  outline: none;
+  transition: var(--transition);
+}
+
+.trip-title-input:focus {
+  border-color: var(--gm-accent);
+  background: rgba(0, 229, 255, 0.04);
+}
+
+/* Journey Number & Title Header Row on Cards */
+.trip-title-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.trip-number-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  background: rgba(0, 229, 255, 0.12);
+  border: 1px solid rgba(0, 229, 255, 0.28);
+  border-radius: var(--radius-pill);
+  color: var(--gm-accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: monospace;
+  letter-spacing: 0.3px;
+}
+
+.trip-named-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--gm-text-primary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-edit-trip-title {
+  background: transparent;
+  border: none;
+  color: var(--gm-text-secondary);
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  transition: var(--transition);
+}
+
+.btn-edit-trip-title:hover {
+  color: var(--gm-accent);
+  background: var(--gm-bg-hover);
 }
 
 .empty-trips-state {

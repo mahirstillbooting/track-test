@@ -200,6 +200,17 @@
                 </div>
               </div>
 
+              <!-- Optional Small Title for Journey -->
+              <div class="recording-title-row">
+                <div class="title-input-wrap">
+                  <svg class="title-input-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                  </svg>
+                  <input type="text" id="tripTitleInput" class="trip-title-input" placeholder="Name this journey (e.g. Office Run, Test Route)..." maxlength="50" autocomplete="off">
+                </div>
+              </div>
+
               <div class="recording-actions">
                 <button id="btnEndRecording" class="btn-gm-danger">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -324,6 +335,32 @@
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                 </svg>
                 <span>Clear History</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Trips Search & Minimal Sort Toolbar -->
+          <div class="trips-toolbar">
+            <div class="trips-search-box">
+              <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" id="tripsSearchInput" class="trips-search-input" placeholder="Search journeys by title, #number, address, date..." autocomplete="off">
+              <button id="btnTripsClearSearch" class="btn-clear-search hidden" title="Clear search">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+
+            <div class="trips-sort-box">
+              <button id="btnTripsSortToggle" class="btn-sort-toggle" title="Filter order: Latest / Oldest">
+                <svg class="sort-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M7 16V4m0 0L3 8m4-4l4 4m6 4v12m0 0l4-4m-4 4l-4-4"/>
+                </svg>
+                <span id="tripsSortLabel">Latest</span>
               </button>
             </div>
           </div>

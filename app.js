@@ -65,10 +65,13 @@ let tripSession = {
   lastRecordedCoord: null
 };
 
-// Trips History Cache & Pagination State
+// Trips History Cache & Pagination / Search / Sort State
 let tripsHistoryCache = {};
 let tripsCurrentPage = 1;
 const tripsPerPage = 5;
+let tripsSearchQuery = '';
+let tripsSortOrder = 'latest'; // 'latest' or 'oldest'
+let tripsDebounceTimer = null;
 
 // =============================================================================
 // LEAFLET MAP INITIALIZATION (High-Detail Texture Layers Retained)
@@ -742,6 +745,8 @@ function handleRideEnded() {
       tripSession.points = [];
       tripSession.totalDistMeters = 0;
       tripSession.lastRecordedCoord = null;
+      const titleInput = document.getElementById('tripTitleInput');
+      if (titleInput) titleInput.value = '';
       if (activeRecordingPolyline && map) {
         map.removeLayer(activeRecordingPolyline);
         activeRecordingPolyline = null;
@@ -761,6 +766,8 @@ function handleRideEnded() {
       tripSession.points = [];
       tripSession.totalDistMeters = 0;
       tripSession.lastRecordedCoord = null;
+      const titleInput = document.getElementById('tripTitleInput');
+      if (titleInput) titleInput.value = '';
       if (activeRecordingPolyline && map) {
         map.removeLayer(activeRecordingPolyline);
         activeRecordingPolyline = null;
@@ -873,6 +880,9 @@ function setupAdminRecordingControls() {
     tripSession.totalDistMeters = 0;
     tripSession.lastRecordedCoord = null;
 
+    const titleInput = document.getElementById('tripTitleInput');
+    if (titleInput) titleInput.value = '';
+
     if (activeRecordingPolyline) {
       map.removeLayer(activeRecordingPolyline);
       activeRecordingPolyline = null;
@@ -922,8 +932,15 @@ function setupAdminRecordingControls() {
     });
     const timeFormatted = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    const titleInput = document.getElementById('tripTitleInput');
+    let customTitle = (titleInput ? titleInput.value.trim() : '');
+    if (!customTitle) {
+      const journeyNum = Object.keys(tripsHistoryCache || {}).length + 1;
+      customTitle = `Journey #${journeyNum} (${dateFormatted})`;
+    }
+
     const tripRecord = {
-      title: `Trip on ${dateFormatted} at ${timeFormatted}`,
+      title: customTitle,
       savedAt: firebase.database.ServerValue.TIMESTAMP,
       formattedDate: `${dateFormatted}, ${timeFormatted}`,
       distanceKm: distanceKm,
@@ -940,6 +957,7 @@ function setupAdminRecordingControls() {
     tripSession.points = [];
     tripSession.totalDistMeters = 0;
     tripSession.lastRecordedCoord = null;
+    if (titleInput) titleInput.value = '';
     if (activeRecordingPolyline && map) {
       map.removeLayer(activeRecordingPolyline);
       activeRecordingPolyline = null;
@@ -970,6 +988,8 @@ function setupAdminRecordingControls() {
       tripSession.points = [];
       tripSession.totalDistMeters = 0;
       tripSession.lastRecordedCoord = null;
+      const titleInput = document.getElementById('tripTitleInput');
+      if (titleInput) titleInput.value = '';
       if (activeRecordingPolyline && map) {
         map.removeLayer(activeRecordingPolyline);
         activeRecordingPolyline = null;
@@ -1013,10 +1033,53 @@ function renderTripsList(historyData) {
   if (!container) return;
   container.innerHTML = '';
 
-  const allKeys = Object.keys(historyData || {}).reverse(); // latest first
-  const shouldShowActiveCard = isRecordingTrip && isSharingActive;
+  // 1. Build chronological numbering so each journey has a stable, permanent number
+  const chronologicalKeys = Object.keys(historyData || {}).sort((a, b) => {
+    const tA = historyData[a].savedAt || historyData[a].startTime || 0;
+    const tB = historyData[b].savedAt || historyData[b].startTime || 0;
+    return tA - tB;
+  });
 
-  if (allKeys.length === 0 && !shouldShowActiveCard) {
+  const tripNumbers = {};
+  chronologicalKeys.forEach((k, idx) => {
+    tripNumbers[k] = idx + 1;
+  });
+
+  // 2. Sort order: Latest First (default) or Oldest First
+  let allKeys = chronologicalKeys.slice();
+  if (tripsSortOrder === 'latest') {
+    allKeys.reverse();
+  }
+
+  // 3. Search Filter: in-memory debounced search by #number, title, address, date (zero network load)
+  if (tripsSearchQuery) {
+    const q = tripsSearchQuery.toLowerCase().trim();
+    allKeys = allKeys.filter(key => {
+      const trip = historyData[key];
+      const num = String(tripNumbers[key] || '');
+      const title = (trip.title || '').toLowerCase();
+      const origin = (trip.originName || '').toLowerCase();
+      const dest = (trip.destinationName || '').toLowerCase();
+      const date = (trip.formattedDate || '').toLowerCase();
+      const dist = String(trip.distanceKm !== undefined ? trip.distanceKm : (trip.totalDistanceKm || ''));
+      return (
+        num === q ||
+        ('#' + num) === q ||
+        ('journey #' + num).includes(q) ||
+        ('journey ' + num).includes(q) ||
+        title.includes(q) ||
+        origin.includes(q) ||
+        dest.includes(q) ||
+        date.includes(q) ||
+        dist.includes(q)
+      );
+    });
+  }
+
+  const shouldShowActiveCard = isRecordingTrip && isSharingActive && !tripsSearchQuery;
+
+  // Empty state: database empty
+  if (chronologicalKeys.length === 0 && !shouldShowActiveCard) {
     if (paginationBar) paginationBar.style.display = 'none';
     container.innerHTML = `
       <div class="empty-trips-state">
@@ -1026,6 +1089,22 @@ function renderTripsList(historyData) {
         </svg>
         <h4>No Recorded Journeys Yet</h4>
         <p>When Admin records a journey during live sharing, it will appear here with distance and route plottings.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Empty state: search returned 0 matches
+  if (allKeys.length === 0 && tripsSearchQuery) {
+    if (paginationBar) paginationBar.style.display = 'none';
+    container.innerHTML = `
+      <div class="empty-trips-state">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <h4>No Journeys Found</h4>
+        <p>No journeys matched your search "<b>${escapeHtml(tripsSearchQuery)}</b>". Try searching by #number, title, or address.</p>
       </div>
     `;
     return;
@@ -1074,7 +1153,7 @@ function renderTripsList(historyData) {
     container.appendChild(activeCard);
   }
 
-  // Pagination calculation for recorded journeys
+  // Pagination calculation for filtered journeys
   const totalTrips = allKeys.length;
   const totalPages = Math.max(1, Math.ceil(totalTrips / tripsPerPage));
   if (tripsCurrentPage > totalPages) tripsCurrentPage = totalPages;
@@ -1086,11 +1165,13 @@ function renderTripsList(historyData) {
   if (pageKeys.length > 0) {
     const pastHeader = document.createElement('div');
     pastHeader.className = 'trips-section-title';
-    pastHeader.textContent = 'Recorded Journeys';
+    pastHeader.textContent = tripsSearchQuery ? `Search Results (${totalTrips})` : 'Recorded Journeys';
     container.appendChild(pastHeader);
 
     pageKeys.forEach(key => {
       const trip = historyData[key];
+      const tripNum = tripNumbers[key] || 1;
+      const tripTitle = trip.title || `Journey #${tripNum}`;
       const dist = trip.distanceKm !== undefined ? trip.distanceKm : (trip.totalDistanceKm || 0.0);
       const duration = trip.durationFormatted || (trip.durationSeconds ? formatDuration(trip.durationSeconds) : '--');
       const ptsCount = trip.pointsCount || (trip.points ? Object.keys(trip.points).length : 0);
@@ -1114,6 +1195,17 @@ function renderTripsList(historyData) {
       const card = document.createElement('div');
       card.className = 'uber-trip-card';
       card.innerHTML = `
+        <div class="trip-title-header-row">
+          <span class="trip-number-badge">#${tripNum}</span>
+          <span class="trip-named-title" title="${escapeHtml(tripTitle)}">${escapeHtml(tripTitle)}</span>
+          <button class="btn-edit-trip-title" data-key="${key}" title="Edit journey title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </button>
+        </div>
+
         <div class="trip-card-main">
           <div class="trip-route-timeline">
             <div class="timeline-point">
@@ -1170,6 +1262,20 @@ function renderTripsList(historyData) {
       card.querySelector('.btn-view-route').addEventListener('click', () => {
         openTripModal(key, trip);
       });
+
+      const btnEdit = card.querySelector('.btn-edit-trip-title');
+      if (btnEdit) {
+        btnEdit.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const current = trip.title || `Journey #${tripNum}`;
+          const newTitle = prompt("Enter a small title for this journey:", current);
+          if (newTitle !== null && newTitle.trim() !== '') {
+            db.ref('history/' + key + '/title').set(newTitle.trim()).catch(err => {
+              alert("Failed to update title: " + err.message);
+            });
+          }
+        });
+      }
 
       const btnDelete = card.querySelector('.btn-delete-trip');
       if (btnDelete) {
@@ -1249,6 +1355,49 @@ function setupTripsPaginationControls() {
         const view = document.getElementById('viewTrips');
         if (view) view.scrollTop = 0;
       }
+    });
+  }
+}
+
+function setupTripsToolbar() {
+  const searchInput = document.getElementById('tripsSearchInput');
+  const btnClear = document.getElementById('btnTripsClearSearch');
+  const btnSort = document.getElementById('btnTripsSortToggle');
+  const sortLabel = document.getElementById('tripsSortLabel');
+
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      const val = e.target.value;
+      if (btnClear) btnClear.classList.toggle('hidden', val.length === 0);
+
+      // Debounce 250ms: prevents unnecessary DOM churn and reduces client/server load
+      clearTimeout(tripsDebounceTimer);
+      tripsDebounceTimer = setTimeout(() => {
+        tripsSearchQuery = val.trim().toLowerCase();
+        tripsCurrentPage = 1;
+        renderTripsList(tripsHistoryCache);
+      }, 250);
+    });
+  }
+
+  if (btnClear) {
+    btnClear.addEventListener('click', () => {
+      if (searchInput) searchInput.value = '';
+      btnClear.classList.add('hidden');
+      tripsSearchQuery = '';
+      tripsCurrentPage = 1;
+      renderTripsList(tripsHistoryCache);
+    });
+  }
+
+  if (btnSort) {
+    btnSort.addEventListener('click', () => {
+      tripsSortOrder = (tripsSortOrder === 'latest') ? 'oldest' : 'latest';
+      if (sortLabel) {
+        sortLabel.textContent = (tripsSortOrder === 'latest') ? 'Latest' : 'Oldest';
+      }
+      tripsCurrentPage = 1;
+      renderTripsList(tripsHistoryCache);
     });
   }
 }
@@ -2582,6 +2731,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupAdminRecordingControls();
   setupClearHistoryButton();
   setupTripsPaginationControls();
+  setupTripsToolbar();
   setupTripModalClose();
   setupNavigation();
   initKinematicsLab();
