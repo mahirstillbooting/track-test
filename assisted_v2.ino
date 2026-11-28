@@ -338,39 +338,88 @@ void injectAgpsUtcTime(const struct tm &utcTime) {
 }
 
 // ======================================================
-// DYNAMIC WI-FI / MODEM IP GEOLOCATION (ZERO SSL, ULTRA-LOW RAM)
+// DYNAMIC WI-FI / MODEM IP GEOLOCATION (2 COORDINATES EXTRACTOR)
 // ======================================================
+double extractJsonDouble(const String &json, const char *key) {
+  int keyIdx = json.indexOf(key);
+  if (keyIdx == -1) return 0.0;
+  int start = keyIdx + strlen(key);
+  while (start < json.length() && (json[start] == ' ' || json[start] == ':' || json[start] == '\"')) {
+    start++;
+  }
+  int end = start;
+  while (end < json.length() && (isdigit(json[end]) || json[end] == '.' || json[end] == '-')) {
+    end++;
+  }
+  if (end > start) {
+    return json.substring(start, end).toDouble();
+  }
+  return 0.0;
+}
+
+String extractJsonString(const String &json, const char *key) {
+  int keyIdx = json.indexOf(key);
+  if (keyIdx == -1) return "";
+  int start = json.indexOf("\"", keyIdx + strlen(key));
+  if (start == -1) return "";
+  start++;
+  int end = json.indexOf("\"", start);
+  if (end == -1) return "";
+  return json.substring(start, end);
+}
+
+// Queries modem internet connection and extracts both Latitude and Longitude
 bool fetchNetworkLocation(double &outLat, double &outLng, String &outCity) {
   if (WiFi.status() != WL_CONNECTED) return false;
 
   HTTPClient http;
-  // Lightweight HTTP endpoint: zero SSL handshake overhead, uses < 150ms
+
+  // Primary Endpoint: ip-api.com (Fast HTTP, zero SSL load, <120ms)
   http.begin("http://ip-api.com/json/?fields=status,lat,lon,city");
   http.setTimeout(1800);
-
   int code = http.GET();
   if (code == 200) {
     String payload = http.getString();
     http.end();
 
-    int latIdx = payload.indexOf("\"lat\":");
-    int lonIdx = payload.indexOf("\"lon\":");
-    int cityIdx = payload.indexOf("\"city\":\"");
+    double lat = extractJsonDouble(payload, "\"lat\":");
+    double lon = extractJsonDouble(payload, "\"lon\":");
+    String city = extractJsonString(payload, "\"city\":");
 
-    if (latIdx != -1 && lonIdx != -1) {
-      outLat = payload.substring(latIdx + 6, payload.indexOf(",", latIdx)).toDouble();
-      int lonEnd = payload.indexOf(",", lonIdx);
-      if (lonEnd == -1) lonEnd = payload.indexOf("}", lonIdx);
-      outLng = payload.substring(lonIdx + 6, lonEnd).toDouble();
-
-      if (cityIdx != -1) {
-        int cityEnd = payload.indexOf("\"", cityIdx + 8);
-        if (cityEnd != -1) outCity = payload.substring(cityIdx + 8, cityEnd);
-      }
-      return (outLat != 0.0 && outLng != 0.0);
+    if (lat != 0.0 && lon != 0.0 && abs(lat) <= 90.0 && abs(lon) <= 180.0) {
+      outLat = lat;
+      outLng = lon;
+      outCity = city.length() > 0 ? city : "Dhaka";
+      Serial.printf("[GEO] Successfully extracted 2 coordinates via ip-api: Lat=%.6f, Lon=%.6f (%s)\n", outLat, outLng, outCity.c_str());
+      return true;
     }
+  } else {
+    http.end();
   }
-  http.end();
+
+  // Secondary Failover Endpoint: ipwho.is (Backup HTTP)
+  http.begin("http://ipwho.is/?fields=success,latitude,longitude,city");
+  http.setTimeout(1800);
+  code = http.GET();
+  if (code == 200) {
+    String payload = http.getString();
+    http.end();
+
+    double lat = extractJsonDouble(payload, "\"latitude\":");
+    double lon = extractJsonDouble(payload, "\"longitude\":");
+    String city = extractJsonString(payload, "\"city\":");
+
+    if (lat != 0.0 && lon != 0.0 && abs(lat) <= 90.0 && abs(lon) <= 180.0) {
+      outLat = lat;
+      outLng = lon;
+      outCity = city.length() > 0 ? city : "Dhaka";
+      Serial.printf("[GEO] Successfully extracted 2 coordinates via ipwho.is: Lat=%.6f, Lon=%.6f (%s)\n", outLat, outLng, outCity.c_str());
+      return true;
+    }
+  } else {
+    http.end();
+  }
+
   return false;
 }
 
@@ -378,7 +427,7 @@ bool fetchNetworkLocation(double &outLat, double &outLng, String &outCity) {
 void executeAgpsBootstrap() {
   if (agpsInjected || WiFi.status() != WL_CONNECTED) return;
 
-  Serial.println("[A-GPS] Fetching network time & dynamic IP geolocation...");
+  Serial.println("[A-GPS] Fetching network time & extracting 2 coordinates from modem connection...");
   configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
 
   struct tm timeinfo;
@@ -386,7 +435,7 @@ void executeAgpsBootstrap() {
     injectAgpsUtcTime(timeinfo);
   }
 
-  // Query live Wi-Fi / modem IP geolocation
+  // Extract Latitude (Coord 1) and Longitude (Coord 2) from connected modem network
   double netLat = 0.0;
   double netLng = 0.0;
   String city   = "Dhaka";
@@ -397,23 +446,29 @@ void executeAgpsBootstrap() {
     lastKnownLng = netLng;
     networkCity  = city;
     indoorAssisted = true;
-    Serial.printf("[A-GPS] Wi-Fi Geolocation Resolved: %s (%.6f, %.6f)\n", city.c_str(), netLat, netLng);
+
+    // Immediately show both extracted coordinates on the LCD
+    char coordBuf[17];
+    snprintf(coordBuf, sizeof(coordBuf), "%.4f,%.4f", netLat, netLng);
+    lcdConfirmation("A-GPS EXTRACTED", coordBuf);
+
+    Serial.printf("[A-GPS] 2 Coordinates Confirmed: Lat=%.6f, Lon=%.6f [%s]\n", netLat, netLng, city.c_str());
   } else {
-    // If router has no internet routing yet, read last saved location from flash
+    // If modem has no active data routing yet, fall back to last real fix in flash
     prefs.begin("chalok", true);
     lastKnownLat = prefs.getDouble("lat", lastKnownLat);
     lastKnownLng = prefs.getDouble("lng", lastKnownLng);
     prefs.end();
-    Serial.printf("[A-GPS] Flash Fallback Location: %.6f, %.6f\n", lastKnownLat, lastKnownLng);
+    lcdConfirmation("A-GPS FLASH", "Last Fix Loaded");
+    Serial.printf("[A-GPS] Loaded Flash Memory Coordinates: %.6f, %.6f\n", lastKnownLat, lastKnownLng);
   }
 
-  // Inject resolved coordinates into NEO-M8N receiver
+  // Inject the 2 coordinates into NEO-M8N GNSS receiver
   injectAgpsPosition(lastKnownLat, lastKnownLng);
 
   agpsInjected = true;
   triggerBuzzerChirp(1, 40);
-  lcdConfirmation("A-GPS: IP-NET", gotGeo ? city.c_str() : "Seed: OK");
-  Serial.println("[A-GPS] Bootstrap complete! Satellite acquisition accelerated.");
+  Serial.println("[A-GPS] Bootstrap complete! Search window narrowed with extracted 2 coordinates.");
 }
 
 // ======================================================
