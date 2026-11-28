@@ -537,7 +537,7 @@ function setupFirebaseListeners() {
 
     // Update Telemetry & UI Cards
     document.getElementById('satsVal').textContent = sats;
-    document.getElementById('gpsFixStatus').textContent = sats >= 4 ? '3D GPS Fix' : 'Searching';
+    document.getElementById('gpsFixStatus').textContent = sats >= 4 ? '3D GPS Fix' : (data.assisted ? 'A-GPS (Wi-Fi Seed)' : 'Searching Sky');
     document.getElementById('tiltVal').textContent = tilt.toFixed(1);
     document.getElementById('tiltSubtext').textContent = `Roll: ${roll.toFixed(1)}° | Pitch: ${pitch.toFixed(1)}°`;
 
@@ -591,7 +591,7 @@ function setupFirebaseListeners() {
       const pill = document.getElementById('coordsSourcePill');
       if (pill) {
         if (data.assisted) {
-          pill.textContent = 'A-GPS';
+          pill.textContent = 'A-GPS (Wi-Fi)';
           pill.classList.add('pill-agps');
         } else {
           pill.textContent = sats >= 4 ? '3D FIX' : 'GPS';
@@ -760,8 +760,8 @@ function handleTripPointRecording(lat, lng) {
     lng
   );
 
-  // Record point if moved >= 2.2 meters (ignores stationary jitter knots)
-  if (distMeters >= 2.2) {
+  // Record point if moved >= 1.6 meters (captures sharp road turns while ignoring stationary knots)
+  if (distMeters >= 1.6) {
     tripSession.totalDistMeters += distMeters;
     tripSession.lastRecordedCoord = { lat, lng };
     tripSession.points.push({ lat, lng, timestamp: Date.now(), speed: currentSpeedKmh });
