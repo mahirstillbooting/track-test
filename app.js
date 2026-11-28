@@ -65,8 +65,10 @@ let tripSession = {
   lastRecordedCoord: null
 };
 
-// Trips History Cache
+// Trips History Cache & Pagination State
 let tripsHistoryCache = {};
+let tripsCurrentPage = 1;
+const tripsPerPage = 5;
 
 // =============================================================================
 // LEAFLET MAP INITIALIZATION (High-Detail Texture Layers Retained)
@@ -173,11 +175,14 @@ function initMainMap() {
     });
   }
 
-  // Detect when user manually explores the map -> pause auto-follow
-  map.on('dragstart', () => {
+  // Detect when user manually explores the map (drag, pinch, zoom, scroll) -> pause auto-follow
+  const pauseAutoFollow = () => {
     isAutoCenteringEnabled = false;
     if (btnRecenter) btnRecenter.classList.remove('active');
-  });
+  };
+
+  map.on('dragstart', pauseAutoFollow);
+  map.on('zoomstart', pauseAutoFollow);
 
   // Multiple staged size invalidations to ensure full rendering on phones
   setTimeout(ensureMapRender, 100);
@@ -188,7 +193,7 @@ function initMainMap() {
 function ensureMapRender() {
   if (map) {
     map.invalidateSize();
-    if (lastCoords.lat !== null && lastCoords.lng !== null) {
+    if (isAutoCenteringEnabled && lastCoords.lat !== null && lastCoords.lng !== null) {
       map.panTo([lastCoords.lat, lastCoords.lng], { animate: false });
     }
   }
@@ -668,13 +673,10 @@ function setupFirebaseListeners() {
       } catch (e) {}
 
       // Intelligent Reactive Map Centering:
-      // If first fix received, OR if device relocated significantly (> 250m away from current map view)
+      // Smoothly follows target ONLY when auto-centering is active; manual zoom/pan leaves view free
       if (map) {
-        const curCenter = map.getCenter();
-        const distFromCenter = calcDistanceMeters(curCenter.lat, curCenter.lng, sLat, sLng);
-
-        if (!hasReceivedFirstFix || distFromCenter > 250) {
-          map.flyTo([sLat, sLng], 17, { duration: hasReceivedFirstFix ? 1.2 : 0.6 });
+        if (!hasReceivedFirstFix) {
+          map.flyTo([sLat, sLng], 17, { duration: 0.6 });
           hasReceivedFirstFix = true;
           isAutoCenteringEnabled = true;
           const btnRecenter = document.getElementById('btnRecenter');
@@ -1003,13 +1005,19 @@ function reloadJourneysPage() {
 
 function renderTripsList(historyData) {
   const container = document.getElementById('tripsList');
+  const paginationBar = document.getElementById('tripsPaginationBar');
+  const paginationInfo = document.getElementById('tripsPaginationInfo');
+  const btnPrev = document.getElementById('btnTripsPrevPage');
+  const btnNext = document.getElementById('btnTripsNextPage');
+
   if (!container) return;
   container.innerHTML = '';
 
-  const keys = Object.keys(historyData || {});
+  const allKeys = Object.keys(historyData || {}).reverse(); // latest first
   const shouldShowActiveCard = isRecordingTrip && isSharingActive;
 
-  if (keys.length === 0 && !shouldShowActiveCard) {
+  if (allKeys.length === 0 && !shouldShowActiveCard) {
+    if (paginationBar) paginationBar.style.display = 'none';
     container.innerHTML = `
       <div class="empty-trips-state">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -1023,11 +1031,11 @@ function renderTripsList(historyData) {
     return;
   }
 
-  // Active orders section (ONLY when currently recording AND ride is actively sharing)
-  if (shouldShowActiveCard) {
+  // Active Journey Section (ONLY when currently recording AND ride is actively sharing, displayed on page 1)
+  if (shouldShowActiveCard && tripsCurrentPage === 1) {
     const activeHeader = document.createElement('div');
     activeHeader.className = 'trips-section-title';
-    activeHeader.textContent = 'Active orders';
+    activeHeader.textContent = 'Active Journey Recording';
     container.appendChild(activeHeader);
 
     const curDistKm = (tripSession.totalDistMeters / 1000).toFixed(2);
@@ -1066,126 +1074,183 @@ function renderTripsList(historyData) {
     container.appendChild(activeCard);
   }
 
-  // Past orders section
-  const pastHeader = document.createElement('div');
-  pastHeader.className = 'trips-section-title';
-  pastHeader.textContent = 'Past orders';
-  container.appendChild(pastHeader);
+  // Pagination calculation for recorded journeys
+  const totalTrips = allKeys.length;
+  const totalPages = Math.max(1, Math.ceil(totalTrips / tripsPerPage));
+  if (tripsCurrentPage > totalPages) tripsCurrentPage = totalPages;
+  if (tripsCurrentPage < 1) tripsCurrentPage = 1;
 
-  // Reverse to show latest first
-  keys.reverse().forEach(key => {
-    const trip = historyData[key];
-    const dist = trip.distanceKm !== undefined ? trip.distanceKm : (trip.totalDistanceKm || 0.0);
-    const duration = trip.durationFormatted || (trip.durationSeconds ? formatDuration(trip.durationSeconds) : '--');
-    const ptsCount = trip.pointsCount || (trip.points ? Object.keys(trip.points).length : 0);
+  const startIndex = (tripsCurrentPage - 1) * tripsPerPage;
+  const pageKeys = allKeys.slice(startIndex, startIndex + tripsPerPage);
 
-    const startLat = trip.startCoords?.lat ? trip.startCoords.lat.toFixed(4) : '--';
-    const startLng = trip.startCoords?.lng ? trip.startCoords.lng.toFixed(4) : '--';
-    const endLat = trip.endCoords?.lat ? trip.endCoords.lat.toFixed(4) : '--';
-    const endLng = trip.endCoords?.lng ? trip.endCoords.lng.toFixed(4) : '--';
+  if (pageKeys.length > 0) {
+    const pastHeader = document.createElement('div');
+    pastHeader.className = 'trips-section-title';
+    pastHeader.textContent = 'Recorded Journeys';
+    container.appendChild(pastHeader);
 
-    // Pretty address names matching Uber UI
-    let originName = `${startLat}, ${startLng}`;
-    let destName = `${endLat}, ${endLng}`;
-    if (trip.title && trip.title.toLowerCase().includes('lalbagh')) {
-      originName = 'Lalbagh Fort, Old Dhaka';
-      destName = 'New Market, Mirpur Rd';
-    } else if (trip.originName) {
-      originName = trip.originName;
-      destName = trip.destinationName || destName;
-    }
+    pageKeys.forEach(key => {
+      const trip = historyData[key];
+      const dist = trip.distanceKm !== undefined ? trip.distanceKm : (trip.totalDistanceKm || 0.0);
+      const duration = trip.durationFormatted || (trip.durationSeconds ? formatDuration(trip.durationSeconds) : '--');
+      const ptsCount = trip.pointsCount || (trip.points ? Object.keys(trip.points).length : 0);
 
-    const card = document.createElement('div');
-    card.className = 'uber-trip-card';
-    card.innerHTML = `
-      <div class="trip-card-main">
-        <div class="trip-route-timeline">
-          <div class="timeline-point">
-            <span class="point-dot start"></span>
-            <div class="point-text-block">
-              <span class="point-address">${originName}</span>
-              <span class="point-role-caption">Pickup point</span>
+      const startLat = trip.startCoords?.lat ? trip.startCoords.lat.toFixed(4) : '--';
+      const startLng = trip.startCoords?.lng ? trip.startCoords.lng.toFixed(4) : '--';
+      const endLat = trip.endCoords?.lat ? trip.endCoords.lat.toFixed(4) : '--';
+      const endLng = trip.endCoords?.lng ? trip.endCoords.lng.toFixed(4) : '--';
+
+      // Pretty address names matching Uber UI
+      let originName = `${startLat}, ${startLng}`;
+      let destName = `${endLat}, ${endLng}`;
+      if (trip.title && trip.title.toLowerCase().includes('lalbagh')) {
+        originName = 'Lalbagh Fort, Old Dhaka';
+        destName = 'New Market, Mirpur Rd';
+      } else if (trip.originName) {
+        originName = trip.originName;
+        destName = trip.destinationName || destName;
+      }
+
+      const card = document.createElement('div');
+      card.className = 'uber-trip-card';
+      card.innerHTML = `
+        <div class="trip-card-main">
+          <div class="trip-route-timeline">
+            <div class="timeline-point">
+              <span class="point-dot start"></span>
+              <div class="point-text-block">
+                <span class="point-address">${originName}</span>
+                <span class="point-role-caption">Pickup point</span>
+              </div>
+            </div>
+            <div class="timeline-point">
+              <span class="point-dot end"></span>
+              <div class="point-text-block">
+                <span class="point-address">${destName}</span>
+                <span class="point-role-caption">Destination</span>
+              </div>
             </div>
           </div>
-          <div class="timeline-point">
-            <span class="point-dot end"></span>
-            <div class="point-text-block">
-              <span class="point-address">${destName}</span>
-              <span class="point-role-caption">Destination</span>
+
+          <div class="trip-right-col">
+            <div class="trip-metric-item">
+              <span class="m-caption">Payment</span>
+              <span class="m-val fare-val">৳45</span>
+            </div>
+            <div class="trip-metric-item">
+              <span class="m-caption">Distance</span>
+              <span class="m-val dist-val">${Number(dist).toFixed(2)} km</span>
             </div>
           </div>
         </div>
 
-        <div class="trip-right-col">
-          <div class="trip-metric-item">
-            <span class="m-caption">Payment</span>
-            <span class="m-val fare-val">৳45</span>
+        <div class="trip-card-footer">
+          <div class="trip-meta-tags">
+            <span>Duration: <b>${duration}</b></span>
+            <span>Points: <b>${ptsCount}</b></span>
+            <span class="trip-date">${trip.formattedDate || ''}</span>
           </div>
-          <div class="trip-metric-item">
-            <span class="m-caption">Distance</span>
-            <span class="m-val dist-val">${Number(dist).toFixed(2)} km</span>
+          <div class="trip-footer-actions">
+            <button class="btn-view-route" data-key="${key}" title="View journey map route">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+              </svg>
+              <span>View Route</span>
+            </button>
+            <button class="btn-delete-trip" data-key="${key}" title="Delete this journey record">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
           </div>
         </div>
-      </div>
+      `;
 
-      <div class="trip-card-footer">
-        <div class="trip-meta-tags">
-          <span>Duration: <b>${duration}</b></span>
-          <span>Points: <b>${ptsCount}</b></span>
-          <span class="trip-date">${trip.formattedDate || ''}</span>
-        </div>
-        <div class="trip-footer-actions">
-          <button class="btn-view-route" data-key="${key}" title="View journey map route">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
-            </svg>
-            <span>View Route</span>
-          </button>
-          <button class="btn-delete-trip" data-key="${key}" title="Delete this journey record">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `;
-
-    card.querySelector('.btn-view-route').addEventListener('click', () => {
-      openTripModal(key, trip);
-    });
-
-    const btnDelete = card.querySelector('.btn-delete-trip');
-    if (btnDelete) {
-      btnDelete.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const confirmed = confirm("Are you sure you want to delete this recorded journey from the database?");
-        if (!confirmed) return;
-
-        db.ref('history/' + key).remove().then(() => {
-          // Deletion handled cleanly; Firebase realtime listener updates list automatically
-        }).catch(err => {
-          alert("Failed to delete journey: " + err.message);
-        });
+      card.querySelector('.btn-view-route').addEventListener('click', () => {
+        openTripModal(key, trip);
       });
-    }
 
-    container.appendChild(card);
-  });
+      const btnDelete = card.querySelector('.btn-delete-trip');
+      if (btnDelete) {
+        btnDelete.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const confirmed = confirm("Are you sure you want to delete this recorded journey from the database?");
+          if (!confirmed) return;
+
+          db.ref('history/' + key).remove().then(() => {
+            const remainingKeys = Object.keys(tripsHistoryCache || {}).filter(k => k !== key);
+            const maxPages = Math.max(1, Math.ceil(remainingKeys.length / tripsPerPage));
+            if (tripsCurrentPage > maxPages) {
+              tripsCurrentPage = maxPages;
+            }
+          }).catch(err => {
+            alert("Failed to delete journey: " + err.message);
+          });
+        });
+      }
+
+      container.appendChild(card);
+    });
+  }
+
+  // Update Pagination Controls
+  if (paginationBar) {
+    if (totalTrips > tripsPerPage) {
+      paginationBar.style.display = 'flex';
+      if (paginationInfo) {
+        paginationInfo.textContent = `Page ${tripsCurrentPage} of ${totalPages} (${totalTrips} journeys)`;
+      }
+      if (btnPrev) btnPrev.disabled = (tripsCurrentPage <= 1);
+      if (btnNext) btnNext.disabled = (tripsCurrentPage >= totalPages);
+    } else {
+      paginationBar.style.display = 'none';
+    }
+  }
 }
 
 // Clear History Button
 function setupClearHistoryButton() {
   document.getElementById('btnClearAllHistory').addEventListener('click', () => {
-    const confirmed = confirm("Are you sure you want to permanently clear all recorded trip history from the database?");
+    const confirmed = confirm("Are you sure you want to permanently clear all recorded journey history from the database?");
     if (!confirmed) return;
 
     db.ref('history').remove().then(() => {
+      tripsCurrentPage = 1;
       alert("All journey history records have been cleared.");
     }).catch(err => {
       alert("Failed to clear history: " + err.message);
     });
   });
+}
+
+function setupTripsPaginationControls() {
+  const btnPrev = document.getElementById('btnTripsPrevPage');
+  const btnNext = document.getElementById('btnTripsNextPage');
+
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      if (tripsCurrentPage > 1) {
+        tripsCurrentPage--;
+        renderTripsList(tripsHistoryCache);
+        const view = document.getElementById('viewTrips');
+        if (view) view.scrollTop = 0;
+      }
+    });
+  }
+
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      const allKeys = Object.keys(tripsHistoryCache || {});
+      const totalPages = Math.ceil(allKeys.length / tripsPerPage);
+      if (tripsCurrentPage < totalPages) {
+        tripsCurrentPage++;
+        renderTripsList(tripsHistoryCache);
+        const view = document.getElementById('viewTrips');
+        if (view) view.scrollTop = 0;
+      }
+    });
+  }
 }
 
 // =============================================================================
@@ -2516,6 +2581,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupModeSwitcher();
   setupAdminRecordingControls();
   setupClearHistoryButton();
+  setupTripsPaginationControls();
   setupTripModalClose();
   setupNavigation();
   initKinematicsLab();

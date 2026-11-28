@@ -314,7 +314,7 @@
           
           <div class="trips-page-header">
             <div class="header-titles">
-              <h2>Order History</h2>
+              <h2>Journeys</h2>
               <p>Showing all your recorded journeys & route plots</p>
             </div>
             <div class="header-actions">
@@ -338,6 +338,19 @@
               <h4>No Recorded Journeys Yet</h4>
               <p>When Admin records a journey during live sharing, it will appear here with distance and route plottings.</p>
             </div>
+          </div>
+
+          <!-- Trips Pagination Controls -->
+          <div id="tripsPaginationBar" class="trips-pagination-bar" style="display: none;">
+            <button id="btnTripsPrevPage" class="btn-pagination" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              <span>Previous</span>
+            </button>
+            <span id="tripsPaginationInfo" class="pagination-info">Page 1 of 1</span>
+            <button id="btnTripsNextPage" class="btn-pagination" disabled>
+              <span>Next</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            </button>
           </div>
 
         </div>
