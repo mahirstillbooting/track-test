@@ -24,6 +24,7 @@ const db = firebase.database();
 let map = null;
 let modalMap = null;
 let trackerMarker = null;
+let accuracyBubble = null;
 let activeRecordingPolyline = null;
 let modalPolyline = null;
 let modalCasing = null;
@@ -137,6 +138,23 @@ function initMainMap() {
     iconSize: [32, 40],
     iconAnchor: [16, 36],
     popupAnchor: [0, -36]
+  });
+
+  // Initial minimal accuracy bubble for approximate standby/A-GPS vicinity
+  accuracyBubble = L.circle([defaultLat, defaultLng], {
+    radius: 180,
+    color: '#00e5ff',
+    weight: 1.5,
+    opacity: 0.65,
+    fillColor: '#00e5ff',
+    fillOpacity: 0.08,
+    dashArray: '5, 8',
+    className: 'chalok-accuracy-bubble'
+  }).addTo(map);
+  accuracyBubble.bindTooltip("Device approximate vicinity (~180m area)", {
+    direction: 'top',
+    offset: [0, -10],
+    className: 'bubble-clean-tooltip'
   });
 
   trackerMarker = L.marker([defaultLat, defaultLng], { icon: trackerIcon }).addTo(map);
@@ -352,6 +370,7 @@ function animateMarker(newLat, newLng) {
   if (lastCoords.lat === null || lastCoords.lng === null) {
     lastCoords = { lat: newLat, lng: newLng };
     trackerMarker.setLatLng([newLat, newLng]);
+    if (accuracyBubble) accuracyBubble.setLatLng([newLat, newLng]);
     return;
   }
 
@@ -387,6 +406,7 @@ function animateMarker(newLat, newLng) {
     const curLng = startLng + (newLng - startLng) * ease;
 
     trackerMarker.setLatLng([curLat, curLng]);
+    if (accuracyBubble) accuracyBubble.setLatLng([curLat, curLng]);
 
     if (progress < 1) {
       animationFrameId = requestAnimationFrame(step);
@@ -396,6 +416,43 @@ function animateMarker(newLat, newLng) {
   }
 
   animationFrameId = requestAnimationFrame(step);
+}
+
+// =============================================================================
+// APPROXIMATE ACCURACY BUBBLE (A-GPS & UNLOCKED VICINITY ENGINE)
+// =============================================================================
+function updateAccuracyBubble(lat, lng, sats, isAssisted) {
+  const is3dLocked = (sats >= 4 && !isAssisted);
+
+  if (is3dLocked) {
+    // 3D Satellite Fix locked: pinpoint accurate down to street meters, remove approximate bubble
+    if (accuracyBubble && map) {
+      map.removeLayer(accuracyBubble);
+      accuracyBubble = null;
+    }
+  } else {
+    // GPS NOT locked (Modem/Wi-Fi A-GPS seed or searching): show minimal clean vicinity bubble
+    if (!accuracyBubble && map) {
+      accuracyBubble = L.circle([lat, lng], {
+        radius: 180, // Approximate radius (~180 meters)
+        color: '#00e5ff',
+        weight: 1.5,
+        opacity: 0.65,
+        fillColor: '#00e5ff',
+        fillOpacity: 0.08,
+        dashArray: '5, 8',
+        className: 'chalok-accuracy-bubble'
+      }).addTo(map);
+
+      accuracyBubble.bindTooltip("Device approximate vicinity (~180m area)", {
+        direction: 'top',
+        offset: [0, -10],
+        className: 'bubble-clean-tooltip'
+      });
+    } else if (accuracyBubble) {
+      accuracyBubble.setLatLng([lat, lng]);
+    }
+  }
 }
 
 // =============================================================================
@@ -601,6 +658,9 @@ function setupFirebaseListeners() {
 
       // Animate Marker Smoothly (Continuous non-stuttering interpolation)
       animateMarker(sLat, sLng);
+
+      // Update approximate accuracy bubble until live 3D satellite lock is acquired
+      updateAccuracyBubble(sLat, sLng, sats, data.assisted);
 
       // Save to localStorage so future page visits immediately open at the real location
       try {

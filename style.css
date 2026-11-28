@@ -3403,3 +3403,45 @@ html, body {
     font-size: 0.78rem;
   }
 }
+
+/* =============================================================================
+   CHALOK MINIMAL ACCURACY BUBBLE (A-GPS & UNLOCKED VICINITY)
+   ============================================================================= */
+.chalok-accuracy-bubble {
+  stroke-dashoffset: 0;
+  animation: bubbleBreathe 3.5s infinite ease-in-out, bubbleDashRotate 24s infinite linear;
+  transition: all 0.4s ease-out;
+}
+
+@keyframes bubbleBreathe {
+  0%, 100% {
+    fill-opacity: 0.05;
+    stroke-opacity: 0.45;
+  }
+  50% {
+    fill-opacity: 0.11;
+    stroke-opacity: 0.80;
+  }
+}
+
+@keyframes bubbleDashRotate {
+  to {
+    stroke-dashoffset: 80;
+  }
+}
+
+.bubble-clean-tooltip {
+  background: rgba(18, 19, 26, 0.94) !important;
+  color: #a8c7fa !important;
+  border: 1px solid rgba(0, 229, 255, 0.40) !important;
+  border-radius: 8px !important;
+  padding: 4px 10px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65) !important;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.bubble-clean-tooltip::before {
+  border-top-color: rgba(18, 19, 26, 0.94) !important;
+}
